@@ -168,10 +168,25 @@ sandbox_disable_remaining() {
     fi
 }
 
+sandbox_on_mode_summary() {
+    case "$AGENT_SANDBOX" in
+        strict|comfortable)
+            printf '%s\n' "$AGENT_SANDBOX"
+            ;;
+        disabled)
+            printf 'disabled requested, no off grant\n'
+            ;;
+        *)
+            printf 'invalid mode: %s\n' "$AGENT_SANDBOX"
+            ;;
+    esac
+}
+
 sandbox_lease_summary() {
     local remaining
     local until
     local expires
+    local mode_summary
 
     remaining="$(sandbox_disable_remaining)"
     if [ "$remaining" = "forever" ]; then
@@ -181,7 +196,8 @@ sandbox_lease_summary() {
         expires="$(date -d "@$until" --iso-8601=seconds 2>/dev/null || printf '@%s' "$until")"
         printf 'sandbox: off (%ss remaining, until %s)\n' "$remaining" "$expires"
     else
-        printf 'sandbox: on\n'
+        mode_summary="$(sandbox_on_mode_summary)"
+        printf 'sandbox: on (%s)\n' "$mode_summary"
     fi
 }
 
@@ -210,7 +226,7 @@ sandbox_disable() {
 sandbox_enable() {
     require_host_terminal
     rm -f "$SANDBOX_DISABLED_UNTIL_FILE"
-    printf 'sandbox: on\n'
+    sandbox_lease_summary
 }
 
 require_active_sandbox_disable() {

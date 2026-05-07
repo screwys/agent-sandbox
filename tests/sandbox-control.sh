@@ -29,7 +29,10 @@ assert_contains() {
 }
 
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox: on"
+assert_contains "$status" "sandbox: on (strict)"
+
+status="$(AGENT_SANDBOX=comfortable run_agent sandbox status)"
+assert_contains "$status" "sandbox: on (comfortable)"
 
 run_agent sandbox off 2m >/dev/null
 lease_file="$HOME/.agent-sandbox/host-control/sandbox-disabled-until"
@@ -58,14 +61,14 @@ assert_contains "$status" "sandbox: off (forever)"
 
 run_agent sandbox on >/dev/null
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox: on"
+assert_contains "$status" "sandbox: on (strict)"
 
 run_agent sandbox disable 1m >/dev/null
 status="$(run_agent sandbox status)"
 assert_contains "$status" "sandbox: off"
 run_agent sandbox enable >/dev/null
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox: on"
+assert_contains "$status" "sandbox: on (strict)"
 
 if AGENT_SANDBOX=disabled run_agent exec true >/tmp/agent-sandbox-disabled.out 2>&1; then
     cat /tmp/agent-sandbox-disabled.out >&2
