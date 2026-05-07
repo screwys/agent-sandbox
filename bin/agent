@@ -27,10 +27,10 @@ PROJECTS_DIR="${AGENT_PROJECTS_DIR:-$HOME/Projects}"
 CONTAINERFILE="${AGENT_CONTAINERFILE:-$REPO/Containerfile}"
 CONTAINER_CONTEXT="${AGENT_CONTEXT:-$REPO}"
 AGENT_NETWORK="${AGENT_NETWORK:-host}"
-AGENT_SANDBOX="${AGENT_SANDBOX:-comfortable}"
+AGENT_SANDBOX="${AGENT_SANDBOX:-strict}"
 HOST_CONTROL_DIR="${AGENT_HOST_CONTROL_DIR:-$STATE_DIR/host-control}"
 SANDBOX_DISABLED_UNTIL_FILE="$HOST_CONTROL_DIR/sandbox-disabled-until"
-SANDBOX_DISABLE_MAX_SECONDS="${AGENT_SANDBOX_DISABLE_MAX_SECONDS:-900}"
+SANDBOX_DISABLE_MAX_SECONDS="${AGENT_SANDBOX_DISABLE_MAX_SECONDS:-14400}"
 
 usage() {
     cat <<'EOF'
@@ -42,7 +42,8 @@ commands:
   shell                   open an interactive shell
   codex [ARG...]          run Codex CLI inside the sandbox
   exec COMMAND [ARG...]   run an arbitrary command inside the sandbox
-  sandbox disable [15m]   allow disabled sandbox mode from a host terminal
+  sandbox disable [240m]  allow disabled sandbox mode from a host terminal
+  sandbox disable --forever
   sandbox enable          clear the disabled sandbox lease
   sandbox status          print disabled sandbox lease status
   doctor                  print basic readiness checks
@@ -81,14 +82,15 @@ require_host_terminal() {
 }
 
 parse_duration_seconds() {
-    local duration="${1:-15m}"
+    local duration="${1:-240m}"
     local number
     local unit
     local seconds
+    local max_minutes
 
     if [[ ! "$duration" =~ ^([0-9]+)([smh]?)$ ]]; then
         printf 'invalid duration: %s\n' "$duration" >&2
-        printf 'use a value like 15m, 900s, or 1m\n' >&2
+        printf 'use a value like 240m, 900s, 1m, or --forever\n' >&2
         exit 2
     fi
 
@@ -117,7 +119,8 @@ parse_duration_seconds() {
     fi
 
     if [ "$seconds" -gt "$SANDBOX_DISABLE_MAX_SECONDS" ]; then
-        printf 'sandbox disable duration maximum is 15m\n' >&2
+        max_minutes=$((SANDBOX_DISABLE_MAX_SECONDS / 60))
+        printf 'sandbox disable duration maximum is %sm\n' "$max_minutes" >&2
         exit 2
     fi
 
@@ -134,6 +137,9 @@ sandbox_disabled_until() {
 
     until="$(head -n 1 "$SANDBOX_DISABLED_UNTIL_FILE" 2>/dev/null || true)"
     case "$until" in
+        forever)
+            printf 'forever\n'
+            ;;
         ''|*[!0-9]*)
             printf '0\n'
             ;;
@@ -150,6 +156,11 @@ sandbox_disable_remaining() {
     now="$(date +%s)"
     until="$(sandbox_disabled_until)"
 
+    if [ "$until" = "forever" ]; then
+        printf 'forever\n'
+        return 0
+    fi
+
     if [ "$until" -gt "$now" ]; then
         printf '%s\n' $((until - now))
     else
@@ -163,7 +174,9 @@ sandbox_lease_summary() {
     local expires
 
     remaining="$(sandbox_disable_remaining)"
-    if [ "$remaining" -gt 0 ]; then
+    if [ "$remaining" = "forever" ]; then
+        printf 'sandbox disable lease: active (forever)\n'
+    elif [ "$remaining" -gt 0 ]; then
         until="$(sandbox_disabled_until)"
         expires="$(date -d "@$until" --iso-8601=seconds 2>/dev/null || printf '@%s' "$until")"
         printf 'sandbox disable lease: active (%ss remaining, expires %s)\n' "$remaining" "$expires"
@@ -177,7 +190,15 @@ sandbox_disable() {
     local until
 
     require_host_terminal
-    seconds="$(parse_duration_seconds "${1:-15m}")"
+    if [ "${1:-}" = "--forever" ] || [ "${1:-}" = "forever" ]; then
+        install -d -m 700 "$STATE_DIR" "$HOST_CONTROL_DIR"
+        printf 'forever\n' >"$SANDBOX_DISABLED_UNTIL_FILE"
+        chmod 600 "$SANDBOX_DISABLED_UNTIL_FILE"
+        sandbox_lease_summary
+        return 0
+    fi
+
+    seconds="$(parse_duration_seconds "${1:-240m}")"
     until="$(($(date +%s) + seconds))"
 
     install -d -m 700 "$STATE_DIR" "$HOST_CONTROL_DIR"
@@ -196,8 +217,13 @@ require_active_sandbox_disable() {
     local remaining
 
     remaining="$(sandbox_disable_remaining)"
+    if [ "$remaining" = "forever" ]; then
+        require_host_terminal
+        return 0
+    fi
+
     if [ "$remaining" -le 0 ]; then
-        printf 'no active sandbox disable lease; run `agent sandbox disable 15m` from a host terminal first\n' >&2
+        printf 'no active sandbox disable lease; run `agent sandbox disable 240m` from a host terminal first\n' >&2
         exit 2
     fi
 
@@ -461,7 +487,7 @@ case "$cmd" in
         case "$sandbox_cmd" in
             disable)
                 shift
-                sandbox_disable "${1:-15m}"
+                sandbox_disable "${1:-240m}"
                 ;;
             enable)
                 shift

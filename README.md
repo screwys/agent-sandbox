@@ -6,7 +6,8 @@ Default behavior:
 
 - persistent isolated home at `~/.agent-sandbox/home`
 - host-side config and permission overrides under `~/.agent-sandbox`
-- read/write access to `~/Projects`
+- read/write access to projects under `~/Projects`
+- read-only access to this launcher repo when it lives under `~/Projects`
 - no access to your normal host home, browser profile, keyring, Wayland socket,
   session D-Bus, or window-manager IPC
 - read-only container OS during normal runs
@@ -48,46 +49,60 @@ browser. The token is stored in the agent home.
 
 ## Modes
 
-Comfortable mode is the default:
+Strict mode is the default:
+
+```sh
+agent shell
+AGENT_SANDBOX=strict agent shell
+```
+
+Strict mode mounts projects read/write, but overlays this launcher repo itself
+as read-only when the repo is under `AGENT_PROJECTS_DIR`.
+
+That matters because `scripts/install.sh` installs `~/.local/bin/agent` as a
+symlink to this repo. If an agent can edit this repo, it can change the host
+command that future terminals will run.
+
+Comfortable mode removes that self-protection:
 
 ```sh
 AGENT_SANDBOX=comfortable agent shell
 ```
 
-It mounts `~/Projects` read/write. If this repo is inside `~/Projects`, the
-agent can edit the sandbox files and affect future runs. That is convenient for
-iteration, but a malicious or confused agent could weaken the rules.
-
-Strict mode overlays the sandbox repo itself as read-only:
-
-```sh
-AGENT_SANDBOX=strict agent shell
-```
-
-Use strict mode when you want the agent to work on projects without changing the
-sandbox launcher, image definition, or install scripts.
+It mounts `~/Projects` read/write as one tree. If this repo is inside
+`~/Projects`, the agent can edit the launcher, image definition, and install
+scripts. Use it for development on the sandbox itself when you accept that risk.
 
 Disabled mode is a temporary host-granted escape hatch:
 
 ```sh
-agent sandbox disable 15m
+agent sandbox disable 240m
 AGENT_SANDBOX=disabled agent shell
 agent sandbox status
 agent sandbox enable
 ```
 
 The `agent sandbox disable` command must be run from an interactive host
-terminal and is capped at 15 minutes. It refuses to run from inside a container.
+terminal and is capped at 240 minutes. It refuses to run from inside a
+container.
+
+Permanent disable is explicit:
+
+```sh
+agent sandbox disable --forever
+AGENT_SANDBOX=disabled agent shell
+agent sandbox enable
+```
 
 Disabled mode mounts your real host home read/write into the container. It still
 keeps `~/.agent-sandbox` read-only, then remounts `~/.agent-sandbox/home`
 writable, so the agent can keep its own state but cannot extend the lease or
-rewrite installed host policy. Use this only for short supervised work.
+rewrite installed host policy directly.
 
-For the host-control boundary to mean anything against a malicious agent, run
-normal work in strict mode or keep this repo outside `AGENT_PROJECTS_DIR`.
-Comfortable mode lets the agent edit this launcher repo if the repo is mounted
-read/write.
+Disabled mode is not a security boundary. In that mode the agent can edit host
+files, including this repo and the symlinked launcher target. `--forever`
+therefore means you are choosing to keep that broad access available until you
+run `agent sandbox enable`.
 
 ## Configuration
 
@@ -107,7 +122,7 @@ AGENT_EXTRA_MOUNTS=/path/a:/path/b
 - `AGENT_EXTRA_MOUNTS` adds extra writable paths. Every extra path is fully
   readable, searchable, and editable by the agent.
 
-Host-control leases live under:
+Host-control grants live under:
 
 ```text
 ~/.agent-sandbox/host-control/
@@ -147,13 +162,16 @@ install -m 600 apps/agent-sandbox/permissions.d/desktop.env \
   ~/.agent-sandbox/permissions.d/desktop.env
 ```
 
-Force strict mode by default:
+Pin a mode explicitly:
 
 ```sh
 cat > ~/.agent-sandbox/config.env <<'EOF'
 AGENT_SANDBOX=strict
 EOF
 ```
+
+Strict is already the built-in default. Use `AGENT_SANDBOX=comfortable` only if
+you want the agent to be able to edit the sandbox repo during normal runs.
 
 Use a less broad network mode:
 

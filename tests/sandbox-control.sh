@@ -38,12 +38,23 @@ test -f "$lease_file"
 status="$(run_agent sandbox status)"
 assert_contains "$status" "sandbox disable lease: active"
 
-if run_agent sandbox disable 16m >/tmp/agent-sandbox-too-long.out 2>&1; then
+run_agent sandbox disable 240m >/dev/null
+status="$(run_agent sandbox status)"
+assert_contains "$status" "sandbox disable lease: active"
+run_agent sandbox enable >/dev/null
+
+if run_agent sandbox disable 241m >/tmp/agent-sandbox-too-long.out 2>&1; then
     cat /tmp/agent-sandbox-too-long.out >&2
-    printf 'expected sandbox disable 16m to fail\n' >&2
+    printf 'expected sandbox disable 241m to fail\n' >&2
     exit 1
 fi
-assert_contains "$(cat /tmp/agent-sandbox-too-long.out)" "maximum is 15m"
+assert_contains "$(cat /tmp/agent-sandbox-too-long.out)" "maximum is 240m"
+
+run_agent sandbox disable --forever >/dev/null
+lease_contents="$(cat "$lease_file")"
+test "$lease_contents" = "forever"
+status="$(run_agent sandbox status)"
+assert_contains "$status" "sandbox disable lease: active (forever)"
 
 run_agent sandbox enable >/dev/null
 status="$(run_agent sandbox status)"
