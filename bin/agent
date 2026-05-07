@@ -28,6 +28,9 @@ CONTAINERFILE="${AGENT_CONTAINERFILE:-$REPO/Containerfile}"
 CONTAINER_CONTEXT="${AGENT_CONTEXT:-$REPO}"
 AGENT_NETWORK="${AGENT_NETWORK:-host}"
 AGENT_SANDBOX="${AGENT_SANDBOX:-comfortable}"
+HOST_CONTROL_DIR="${AGENT_HOST_CONTROL_DIR:-$STATE_DIR/host-control}"
+SANDBOX_DISABLED_UNTIL_FILE="$HOST_CONTROL_DIR/sandbox-disabled-until"
+SANDBOX_DISABLE_MAX_SECONDS="${AGENT_SANDBOX_DISABLE_MAX_SECONDS:-900}"
 
 usage() {
     cat <<'EOF'
@@ -39,6 +42,9 @@ commands:
   shell                   open an interactive shell
   codex [ARG...]          run Codex CLI inside the sandbox
   exec COMMAND [ARG...]   run an arbitrary command inside the sandbox
+  sandbox disable [15m]   allow disabled sandbox mode from a host terminal
+  sandbox enable          clear the disabled sandbox lease
+  sandbox status          print disabled sandbox lease status
   doctor                  print basic readiness checks
 EOF
 }
@@ -50,13 +56,161 @@ need_cmd() {
     }
 }
 
+running_inside_container() {
+    [ "${AGENT_FORCE_CONTAINER:-}" = "1" ] && return 0
+    [ -f /.dockerenv ] && return 0
+    [ -f /run/.containerenv ] && return 0
+    [ -n "${container:-}" ] && return 0
+    return 1
+}
+
+require_host_terminal() {
+    if running_inside_container; then
+        printf 'sandbox disable controls must be run from an interactive host terminal\n' >&2
+        exit 2
+    fi
+
+    if [ "${AGENT_HOST_CONTROL_TEST:-}" = "1" ]; then
+        return 0
+    fi
+
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        printf 'sandbox disable controls must be run from an interactive host terminal\n' >&2
+        exit 2
+    fi
+}
+
+parse_duration_seconds() {
+    local duration="${1:-15m}"
+    local number
+    local unit
+    local seconds
+
+    if [[ ! "$duration" =~ ^([0-9]+)([smh]?)$ ]]; then
+        printf 'invalid duration: %s\n' "$duration" >&2
+        printf 'use a value like 15m, 900s, or 1m\n' >&2
+        exit 2
+    fi
+
+    number="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2]:-s}"
+
+    case "$unit" in
+        s)
+            seconds="$number"
+            ;;
+        m)
+            seconds=$((number * 60))
+            ;;
+        h)
+            seconds=$((number * 3600))
+            ;;
+        *)
+            printf 'invalid duration unit: %s\n' "$unit" >&2
+            exit 2
+            ;;
+    esac
+
+    if [ "$seconds" -le 0 ]; then
+        printf 'duration must be greater than zero\n' >&2
+        exit 2
+    fi
+
+    if [ "$seconds" -gt "$SANDBOX_DISABLE_MAX_SECONDS" ]; then
+        printf 'sandbox disable duration maximum is 15m\n' >&2
+        exit 2
+    fi
+
+    printf '%s\n' "$seconds"
+}
+
+sandbox_disabled_until() {
+    local until
+
+    [ -f "$SANDBOX_DISABLED_UNTIL_FILE" ] || {
+        printf '0\n'
+        return 0
+    }
+
+    until="$(head -n 1 "$SANDBOX_DISABLED_UNTIL_FILE" 2>/dev/null || true)"
+    case "$until" in
+        ''|*[!0-9]*)
+            printf '0\n'
+            ;;
+        *)
+            printf '%s\n' "$until"
+            ;;
+    esac
+}
+
+sandbox_disable_remaining() {
+    local now
+    local until
+
+    now="$(date +%s)"
+    until="$(sandbox_disabled_until)"
+
+    if [ "$until" -gt "$now" ]; then
+        printf '%s\n' $((until - now))
+    else
+        printf '0\n'
+    fi
+}
+
+sandbox_lease_summary() {
+    local remaining
+    local until
+    local expires
+
+    remaining="$(sandbox_disable_remaining)"
+    if [ "$remaining" -gt 0 ]; then
+        until="$(sandbox_disabled_until)"
+        expires="$(date -d "@$until" --iso-8601=seconds 2>/dev/null || printf '@%s' "$until")"
+        printf 'sandbox disable lease: active (%ss remaining, expires %s)\n' "$remaining" "$expires"
+    else
+        printf 'sandbox disable lease: inactive\n'
+    fi
+}
+
+sandbox_disable() {
+    local seconds
+    local until
+
+    require_host_terminal
+    seconds="$(parse_duration_seconds "${1:-15m}")"
+    until="$(($(date +%s) + seconds))"
+
+    install -d -m 700 "$STATE_DIR" "$HOST_CONTROL_DIR"
+    printf '%s\n' "$until" >"$SANDBOX_DISABLED_UNTIL_FILE"
+    chmod 600 "$SANDBOX_DISABLED_UNTIL_FILE"
+    sandbox_lease_summary
+}
+
+sandbox_enable() {
+    require_host_terminal
+    rm -f "$SANDBOX_DISABLED_UNTIL_FILE"
+    printf 'sandbox disable lease: inactive\n'
+}
+
+require_active_sandbox_disable() {
+    local remaining
+
+    remaining="$(sandbox_disable_remaining)"
+    if [ "$remaining" -le 0 ]; then
+        printf 'no active sandbox disable lease; run `agent sandbox disable 15m` from a host terminal first\n' >&2
+        exit 2
+    fi
+
+    require_host_terminal
+}
+
 ensure_dirs() {
     case "$AGENT_SANDBOX" in
-        comfortable|strict)
+        comfortable|strict|disabled)
             ;;
         *)
             printf 'invalid AGENT_SANDBOX: %s\n' "$AGENT_SANDBOX" >&2
-            printf 'allowed values: comfortable, strict\n' >&2
+            printf 'allowed values: comfortable, strict, disabled\n' >&2
             exit 2
             ;;
     esac
@@ -162,6 +316,21 @@ mount_projects() {
     fi
 }
 
+mount_disabled_filesystems() {
+    add_mount_if_exists "$HOME"
+    case "$PROJECTS_DIR/" in
+        "$HOME"/*)
+            ;;
+        *)
+            add_mount_if_exists "$PROJECTS_DIR"
+            ;;
+    esac
+    add_extra_mounts
+    add_mount_if_exists "$STATE_DIR" "$STATE_DIR" "ro"
+    add_mount_if_exists "$HOST_CONTROL_DIR" "$HOST_CONTROL_DIR" "ro"
+    add_mount_if_exists "$AGENT_HOME" "$AGENT_HOME" "rw"
+}
+
 workdir_for_container() {
     case "$PWD/" in
         "$PROJECTS_DIR"/*)
@@ -175,6 +344,9 @@ workdir_for_container() {
 
 run_container() {
     ensure_dirs
+    if [ "$AGENT_SANDBOX" = "disabled" ]; then
+        require_active_sandbox_disable
+    fi
     ensure_image
     start_adb_server
 
@@ -183,7 +355,6 @@ run_container() {
         --rm
         --userns=keep-id
         --network="$AGENT_NETWORK"
-        --read-only
         --security-opt=no-new-privileges
         --security-opt=label=disable
         --cap-drop=all
@@ -198,9 +369,11 @@ run_container() {
         --env "ANDROID_SDK_ROOT=$HOME/Android/Sdk"
         --env "GRADLE_USER_HOME=$HOME/.gradle"
         --env "ADB_SERVER_SOCKET=tcp:127.0.0.1:5037"
-        --volume "$AGENT_HOME:$HOME:rw"
         --workdir "$(workdir_for_container)"
     )
+    if [ "$AGENT_SANDBOX" != "disabled" ]; then
+        PODMAN_ARGS+=(--read-only)
+    fi
 
     if [ -t 0 ]; then
         PODMAN_ARGS+=(--interactive)
@@ -209,8 +382,13 @@ run_container() {
         PODMAN_ARGS+=(--tty)
     fi
 
-    mount_projects
-    add_extra_mounts
+    if [ "$AGENT_SANDBOX" = "disabled" ]; then
+        mount_disabled_filesystems
+    else
+        add_mount_if_exists "$AGENT_HOME" "$HOME" "rw"
+        mount_projects
+        add_extra_mounts
+    fi
 
     exec podman "${PODMAN_ARGS[@]}" "$IMAGE" "$@"
 }
@@ -243,6 +421,7 @@ doctor() {
     fi
     printf 'network: %s\n' "$AGENT_NETWORK"
     printf 'sandbox mode: %s\n' "$AGENT_SANDBOX"
+    sandbox_lease_summary
     printf 'adb server: '
     if command -v adb >/dev/null 2>&1 && adb devices >/dev/null 2>&1; then
         printf 'reachable\n'
@@ -275,6 +454,28 @@ case "$cmd" in
             exit 2
         }
         run_container "$@"
+        ;;
+    sandbox)
+        shift
+        sandbox_cmd="${1:-status}"
+        case "$sandbox_cmd" in
+            disable)
+                shift
+                sandbox_disable "${1:-15m}"
+                ;;
+            enable)
+                shift
+                sandbox_enable
+                ;;
+            status|"")
+                sandbox_lease_summary
+                ;;
+            *)
+                printf 'unknown sandbox command: %s\n' "$sandbox_cmd" >&2
+                usage >&2
+                exit 2
+                ;;
+        esac
         ;;
     doctor)
         doctor

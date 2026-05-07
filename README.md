@@ -67,6 +67,28 @@ AGENT_SANDBOX=strict agent shell
 Use strict mode when you want the agent to work on projects without changing the
 sandbox launcher, image definition, or install scripts.
 
+Disabled mode is a temporary host-granted escape hatch:
+
+```sh
+agent sandbox disable 15m
+AGENT_SANDBOX=disabled agent shell
+agent sandbox status
+agent sandbox enable
+```
+
+The `agent sandbox disable` command must be run from an interactive host
+terminal and is capped at 15 minutes. It refuses to run from inside a container.
+
+Disabled mode mounts your real host home read/write into the container. It still
+keeps `~/.agent-sandbox` read-only, then remounts `~/.agent-sandbox/home`
+writable, so the agent can keep its own state but cannot extend the lease or
+rewrite installed host policy. Use this only for short supervised work.
+
+For the host-control boundary to mean anything against a malicious agent, run
+normal work in strict mode or keep this repo outside `AGENT_PROJECTS_DIR`.
+Comfortable mode lets the agent edit this launcher repo if the repo is mounted
+read/write.
+
 ## Configuration
 
 ```sh
@@ -84,6 +106,14 @@ AGENT_EXTRA_MOUNTS=/path/a:/path/b
   Podman network mode if you do not want host-local network access.
 - `AGENT_EXTRA_MOUNTS` adds extra writable paths. Every extra path is fully
   readable, searchable, and editable by the agent.
+
+Host-control leases live under:
+
+```text
+~/.agent-sandbox/host-control/
+```
+
+Do not mount that path read/write.
 
 ## Permission Overrides
 
