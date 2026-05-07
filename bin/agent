@@ -42,6 +42,8 @@ commands:
   shell                   open an interactive shell
   codex [ARG...]          run Codex CLI inside the sandbox
   desktop COMMAND ADAPTER manage optional host-side Desktop adapters
+  allow PATH [PATH...]    add host folders to the agent mount list
+  config [edit|open|path] edit, open, or print the host permission config
   exec COMMAND [ARG...]   run an arbitrary command inside the sandbox
   sandbox off [240m]      allow disabled sandbox mode from a host terminal
   sandbox off --forever
@@ -63,6 +65,10 @@ commands:
 Desktop adapters are convenience launchers. They run outside the container and
 only point supported app subprocesses at sandboxed CLI/app-server commands.
 EOF
+}
+
+config_file_for_mounts() {
+    printf '%s/local.env\n' "$PERMISSIONS_DIR"
 }
 
 need_cmd() {
@@ -98,7 +104,7 @@ require_host_terminal() {
 
 require_host_runtime_for_desktop() {
     if running_inside_container; then
-        printf 'desktop adapter commands must be run from a host terminal\n' >&2
+        printf 'this command must be run from a host terminal\n' >&2
         return 2
     fi
 }
@@ -923,6 +929,134 @@ desktop_cmd() {
     esac
 }
 
+load_configured_mounts() {
+    local file
+
+    file="$(config_file_for_mounts)"
+    [ -f "$file" ] || return 0
+
+    (
+        AGENT_EXTRA_MOUNTS=""
+        # shellcheck disable=SC1090
+        . "$file"
+        printf '%s\n' "${AGENT_EXTRA_MOUNTS:-}"
+    )
+}
+
+write_configured_mounts() {
+    local mounts="$1"
+    local file
+
+    file="$(config_file_for_mounts)"
+    install -d -m 700 "$PERMISSIONS_DIR"
+    cat >"$file" <<EOF
+# edited by agent allow
+AGENT_EXTRA_MOUNTS=$(printf '%q' "$mounts")
+EOF
+    chmod 600 "$file"
+}
+
+mount_list_contains() {
+    local list="$1"
+    local item="$2"
+    local old_ifs
+    local mount
+    local -a mounts=()
+
+    old_ifs="$IFS"
+    IFS=:
+    read -r -a mounts <<<"$list"
+    IFS="$old_ifs"
+
+    for mount in "${mounts[@]}"; do
+        [ "$mount" = "$item" ] && return 0
+    done
+    return 1
+}
+
+append_mount_to_list() {
+    local list="$1"
+    local item="$2"
+
+    if [ -n "$list" ]; then
+        printf '%s:%s\n' "$list" "$item"
+    else
+        printf '%s\n' "$item"
+    fi
+}
+
+allow_cmd() {
+    local path
+    local real
+    local mounts
+    local changed=0
+
+    require_host_runtime_for_desktop
+    [ "$#" -gt 0 ] || {
+        printf 'usage: agent allow PATH [PATH...]\n' >&2
+        return 2
+    }
+
+    mounts="$(load_configured_mounts)"
+    for path in "$@"; do
+        if [ ! -d "$path" ]; then
+            printf 'not a directory: %s\n' "$path" >&2
+            return 2
+        fi
+        real="$(canonical_path "$path")"
+        if mount_list_contains "$mounts" "$real"; then
+            printf 'already allowed: %s\n' "$real"
+            continue
+        fi
+        mounts="$(append_mount_to_list "$mounts" "$real")"
+        changed=1
+        printf 'allowed: %s\n' "$real"
+    done
+
+    if [ "$changed" -eq 1 ]; then
+        write_configured_mounts "$mounts"
+        printf 'config: %s\n' "$(config_file_for_mounts)"
+    fi
+}
+
+config_cmd() {
+    local subcmd="${1:-edit}"
+    local file
+
+    require_host_runtime_for_desktop
+    file="$(config_file_for_mounts)"
+
+    case "$subcmd" in
+        path)
+            printf '%s\n' "$file"
+            ;;
+        open)
+            install -d -m 700 "$PERMISSIONS_DIR"
+            if command -v xdg-open >/dev/null 2>&1; then
+                xdg-open "$PERMISSIONS_DIR" >/dev/null 2>&1 &
+            else
+                printf '%s\n' "$PERMISSIONS_DIR"
+            fi
+            ;;
+        edit|"")
+            install -d -m 700 "$PERMISSIONS_DIR"
+            if [ ! -f "$file" ]; then
+                write_configured_mounts "$(load_configured_mounts)"
+            fi
+            if [ -n "${EDITOR:-}" ]; then
+                "$EDITOR" "$file"
+            else
+                printf '%s\n' "$file"
+            fi
+            ;;
+        *)
+            printf 'unknown config command: %s\n' "$subcmd" >&2
+            printf 'usage: agent config [edit|open|path]\n' >&2
+            return 2
+            ;;
+    esac
+}
+
 doctor() {
     printf 'image: '
     if image_exists; then
@@ -975,6 +1109,14 @@ case "$cmd" in
     desktop)
         shift
         desktop_cmd "$@"
+        ;;
+    allow)
+        shift
+        allow_cmd "$@"
+        ;;
+    config)
+        shift
+        config_cmd "$@"
         ;;
     exec)
         shift

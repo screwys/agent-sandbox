@@ -3,18 +3,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO="${AGENT_REPO:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
-BUILD_IMAGE=0
+BUILD_IMAGE=1
 SETUP_ANDROID_SDK=0
 INSTALL_CODEX_AGENT_SHIM="${INSTALL_CODEX_AGENT_SHIM:-0}"
-INSTALL_CODEX_DESKTOP_LAUNCHER="${INSTALL_CODEX_DESKTOP_LAUNCHER:-0}"
+INSTALL_CODEX_DESKTOP_LAUNCHER="${INSTALL_CODEX_DESKTOP_LAUNCHER:-auto}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-$HOME/.agent-sandbox}"
 
 usage() {
     cat <<'EOF'
-usage: install.sh [--build-image] [--setup-android-sdk]
+usage: install.sh [--no-build-image] [--setup-android-sdk]
 
 options:
-  --build-image          build localhost/agent-sandbox:latest after linking commands
+  --no-build-image       only link commands, do not build the Podman image
   --setup-android-sdk    install Android SDK into the agent home
   -h, --help             show this help
 
@@ -23,7 +23,7 @@ environment:
   AGENT_STATE_DIR             state/config dir (default: ~/.agent-sandbox)
   INSTALL_CODEX_AGENT_SHIM    install ~/.local/bin/codex shim (default: 0)
   INSTALL_CODEX_DESKTOP_LAUNCHER
-                              deprecated; use `agent desktop install codex`
+                              auto, 1, or 0 (default: auto)
 EOF
 }
 
@@ -35,6 +35,14 @@ truthy() {
     esac
     return 1
 }
+
+if [ -n "${AGENT_INSTALL_BUILD_IMAGE:-}" ]; then
+    if truthy "$AGENT_INSTALL_BUILD_IMAGE"; then
+        BUILD_IMAGE=1
+    else
+        BUILD_IMAGE=0
+    fi
+fi
 
 link_file() {
     local rel="$1"
@@ -77,6 +85,10 @@ while [ $# -gt 0 ]; do
             BUILD_IMAGE=1
             shift
             ;;
+        --no-build-image)
+            BUILD_IMAGE=0
+            shift
+            ;;
         --setup-android-sdk)
             SETUP_ANDROID_SDK=1
             shift
@@ -102,6 +114,7 @@ chmod +x \
     "$REPO/bin/agent" \
     "$REPO/bin/agent-codex" \
     "$REPO/bin/codex" \
+    "$REPO/scripts/bootstrap.sh" \
     "$REPO/scripts/setup-android-sdk"
 
 install -d -m 700 "$AGENT_STATE_DIR" "$AGENT_STATE_DIR/permissions.d"
@@ -120,13 +133,32 @@ fi
 remove_owned_symlink "$HOME/.local/bin/agent-codex-desktop" "$REPO/bin/agent-codex-desktop"
 remove_owned_desktop_entry "$HOME/.local/share/applications/agent-codex-desktop.desktop"
 
-if truthy "$INSTALL_CODEX_DESKTOP_LAUNCHER"; then
-    echo "SKIP: INSTALL_CODEX_DESKTOP_LAUNCHER is deprecated; run: agent desktop install codex"
-fi
-
 if [ "$BUILD_IMAGE" -eq 1 ]; then
     "$HOME/.local/bin/agent" build-image
 fi
+
+case "${INSTALL_CODEX_DESKTOP_LAUNCHER,,}" in
+    0|no|false|off|never)
+        echo "SKIP: Codex desktop launcher disabled by INSTALL_CODEX_DESKTOP_LAUNCHER=$INSTALL_CODEX_DESKTOP_LAUNCHER"
+        ;;
+    auto)
+        desktop_install_log="$(mktemp)"
+        if "$HOME/.local/bin/agent" desktop install codex >"$desktop_install_log" 2>&1; then
+            cat "$desktop_install_log"
+        else
+            echo "SKIP: Codex desktop launcher not installed; unsupported local Codex Desktop layout"
+        fi
+        rm -f "$desktop_install_log"
+        ;;
+    *)
+        if truthy "$INSTALL_CODEX_DESKTOP_LAUNCHER"; then
+            "$HOME/.local/bin/agent" desktop install codex
+        else
+            echo "unknown INSTALL_CODEX_DESKTOP_LAUNCHER value: $INSTALL_CODEX_DESKTOP_LAUNCHER" >&2
+            exit 2
+        fi
+        ;;
+esac
 
 if [ "$SETUP_ANDROID_SDK" -eq 1 ]; then
     "$HOME/.local/bin/agent" setup-android-sdk

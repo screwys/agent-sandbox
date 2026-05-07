@@ -1,356 +1,127 @@
 # Agent Sandbox
 
-A small Podman sandbox for CLI coding agents.
+A basic Podman sandbox for autonomous CLI agents.
 
-Default guarantee: sandboxed CLI agents with bounded filesystem access.
+Most agent tools include their own sandbox controls, but those controls are
+often broad: deny a few commands, or switch to a whitelist mode and approve
+every little command. Agent Sandbox puts the agent in a small Linux container
+with its own home directory and only the folders you choose to mount.
 
-Default behavior:
-
-- persistent isolated home at `~/.agent-sandbox/home`
-- host-side config and permission overrides under `~/.agent-sandbox`
-- read/write access to projects under `~/Projects`
-- read-only access to this launcher repo when it lives under `~/Projects`
-- no access to your normal host home, browser profile, keyring, Wayland socket,
-  session D-Bus, or window-manager IPC
-- read-only container OS during normal runs
-- Codex CLI, `gh`, adb, Java, Go, Python, ripgrep, fd, SQLite, and Playwright
-  browsers in the image
-
-Optional Desktop launchers are host-side adapters. They are convenience wrappers
-for specific app/package layouts, not a generic Desktop sandbox promise.
-
-This is a practical development boundary, not a VM.
+This is not a VM and it does not claim to sandbox every Desktop app. It is a
+simple default boundary for CLI agents.
 
 ## Install
 
+Requires `git` and `podman`.
+
 ```sh
-git clone https://github.com/yourname/agent-sandbox ~/Projects/agent-sandbox
-cd ~/Projects/agent-sandbox
-./scripts/install.sh --build-image
-agent doctor
+curl -fsSL https://raw.githubusercontent.com/screwys/agent-sandbox/main/scripts/bootstrap.sh | bash
 ```
 
-This installs `agent` and `agent-codex`.
+That clones the repo to `~/Projects/agent-sandbox`, installs `agent` and
+`agent-codex`, builds the Podman image, and creates `Codex (Sandboxed)` if a
+supported Codex Desktop install is detected.
 
-It does not shadow a host-native `codex` command by default. If you really want
-plain `codex` to enter the sandbox, rerun install with
-`INSTALL_CODEX_AGENT_SHIM=1`.
+Local install from a clone:
+
+```sh
+./scripts/install.sh
+```
 
 ## Use
 
 ```sh
 agent shell
-agent codex
 agent-codex
 agent exec rg TODO ~/Projects
 ```
 
-`agent-codex` preserves stdio for Codex Desktop app-server mode, so it can be
-used as a `CODEX_CLI_PATH` target.
+By default the agent gets:
 
-## Desktop Adapters
+- its own home at `~/.agent-sandbox/home`
+- read/write access to `~/Projects`
+- no access to your normal home, browser profile, keyring, session D-Bus, or
+  window-manager IPC
+- a read-only container OS during normal runs
 
-Desktop support is intentionally outside the core guarantee.
-
-The core model owns:
-
-- `agent`
-- `agent shell`
-- `agent-codex`
-- Podman image/build behavior
-- mounts and permission overrides
-- disable leases
-- config overrides
-
-Desktop launchers are host-side adapters installed outside the sandbox. In
-normal modes the agent cannot edit `~/.local/bin` or
-`~/.local/share/applications`, so generated host launcher files are read-only to
-the agent by default.
-
-Available adapter commands:
+## Give Access To A Folder
 
 ```sh
-agent desktop detect codex
-agent desktop validate codex
-agent desktop install codex
-
-agent desktop detect claude
-agent desktop validate claude
-agent desktop install claude
+agent allow ~/Server/Bunker
+agent allow ~/Development/my-app
 ```
 
-Each adapter defines its own detection, validation, wrapper path, and `.desktop`
-path. If the detected package layout differs from the exact supported layout,
-validation and install fail with an unsupported-layout error, and no launcher is
-generated.
+Or edit the config directly:
 
-### Codex Desktop
+```sh
+agent config edit
+agent config open
+```
 
-The Codex adapter is experimental and package-specific. It supports the current
-Arch-style package layout only:
+The config lives under:
 
 ```text
-/usr/bin/codex-desktop
-/usr/lib/electron39/electron
-/usr/lib/openai-codex-desktop/resources/app.asar
-/usr/lib/openai-codex-desktop/content/webview
+~/.agent-sandbox/permissions.d/local.env
 ```
 
-Install it with:
+## Commands
 
 ```sh
-agent desktop validate codex
-agent desktop install codex
+agent shell                 # interactive sandbox shell
+agent-codex                 # Codex CLI in the sandbox
+agent codex                 # same, through the main command
+agent exec <command>        # run any command in the sandbox
+agent allow <folder>        # mount another folder read/write
+agent config edit           # edit folder access config
+agent doctor                # show basic status
 ```
 
-That writes:
+`agent-codex` is explicit on purpose. The installer does not replace your
+native `/usr/bin/codex` unless you opt in:
+
+```sh
+INSTALL_CODEX_AGENT_SHIM=1 ./scripts/install.sh
+```
+
+## Desktop
+
+Desktop launchers are host-side adapters, not the core sandbox guarantee.
+
+The installer creates `Codex (Sandboxed)` by default when it detects the tested
+Codex Desktop layout from
+[ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux).
+That launcher runs host-native Electron, but points Codex's CLI/app-server
+subprocess at:
 
 ```text
-~/.local/bin/codex-desktop-sandboxed
-~/.local/share/applications/codex-sandboxed.desktop
+~/.local/bin/agent-codex
 ```
 
-The generated launcher appears as `Codex (Sandboxed)`. It runs host-native
-Electron, starts a separate webview server on `127.0.0.1:5176`, sets
-`XDG_CONFIG_HOME=$HOME/.config/codex-sandboxed`, and sets
-`CODEX_CLI_PATH=$HOME/.local/bin/agent-codex`.
+It also uses a separate config/profile directory:
 
-Electron itself is not sandboxed by this project. The sandboxed part is the
-Codex CLI/app-server subprocess reached through `agent-codex` and Podman.
-
-Local chats are not shared between native Codex Desktop and `Codex (Sandboxed)`
-by default. Shared local state defeats isolation. If that workflow becomes
-needed, it should be a host-only import/export tool instead of a shared profile.
-
-### Claude Desktop
-
-The Claude adapter command exists so callers get a stable interface and a clear
-unsupported error. No Claude Desktop package layout is registered yet because no
-stable launcher contract is known for CLI path, profile/config dir, or
-app-server transport.
-
-## GitHub Auth
-
-Authenticate inside the sandbox. Host GitHub auth is not copied.
-
-```sh
-agent shell
-gh auth login -h github.com -p https -w
-gh auth setup-git
-gh auth status
+```text
+~/.config/codex-sandboxed
 ```
 
-If browser opening fails, copy the printed GitHub URL/code into your host
-browser. The token is stored in the agent home.
+Native Codex Desktop stays native. Local chats are not shared by default.
 
-## Modes
+Claude Desktop adapter: TODO.
 
-Strict mode is the default:
+## Disable The Sandbox Temporarily
 
-```sh
-agent shell
-AGENT_SANDBOX=strict agent shell
-```
-
-Strict mode mounts projects read/write, but overlays this launcher repo itself
-as read-only when the repo is under `AGENT_PROJECTS_DIR`.
-
-That matters because `scripts/install.sh` installs `~/.local/bin/agent` as a
-symlink to this repo. If an agent can edit this repo, it can change the host
-command that future terminals will run.
-
-Comfortable mode keeps that self-protection:
-
-```sh
-AGENT_SANDBOX=comfortable agent shell
-```
-
-It still mounts this launcher repo read-only. Comfortable mode is not the way to
-let an agent edit the sandbox rules.
-
-To edit this repo, use a host terminal:
-
-```sh
-cd ~/Projects/agent-sandbox
-$EDITOR README.md bin/agent
-```
-
-Or intentionally enter disabled mode first.
-
-Disabled mode is a temporary host-granted escape hatch:
+Use this only from a host terminal:
 
 ```sh
 agent sandbox off 240m
 AGENT_SANDBOX=disabled agent shell
-agent sandbox status
 agent sandbox on
 ```
 
-The `agent sandbox off` command must be run from an interactive host
-terminal and is capped at 240 minutes. It refuses to run from inside a
-container.
-
-Turning the sandbox off permanently is explicit:
-
-```sh
-agent sandbox off --forever
-AGENT_SANDBOX=disabled agent shell
-agent sandbox on
-```
-
-Disabled mode mounts your real host home read/write into the container. It still
-keeps `~/.agent-sandbox` read-only, then remounts `~/.agent-sandbox/home`
-writable, so the agent can keep its own state but cannot extend the lease or
-rewrite installed host policy directly.
-
-Disabled mode is not a security boundary. In that mode the agent can edit host
-files, including this repo and the symlinked launcher target. `--forever`
-therefore means you are choosing to keep that broad access available until you
-run `agent sandbox on`.
-
-## Configuration
-
-```sh
-AGENT_PROJECTS_DIR=~/Projects
-AGENT_STATE_DIR=~/.agent-sandbox
-AGENT_IMAGE=localhost/agent-sandbox:latest
-AGENT_NETWORK=host
-AGENT_EXTRA_MOUNTS=/path/a:/path/b
-```
-
-- `AGENT_PROJECTS_DIR` is the default writable project mount.
-- `AGENT_STATE_DIR` stores the persistent agent home.
-- `AGENT_IMAGE` selects the Podman image.
-- `AGENT_NETWORK=host` is convenient for local dev servers and adb. Use another
-  Podman network mode if you do not want host-local network access.
-- `AGENT_EXTRA_MOUNTS` adds extra writable paths. Every extra path is fully
-  readable, searchable, and editable by the agent.
-
-In normal modes, extra mounts that contain this launcher repo are skipped. Use a
-host terminal or disabled mode when you want to edit the sandbox itself.
-
-Host-control grants live under:
-
-```text
-~/.agent-sandbox/host-control/
-```
-
-Do not mount that path read/write.
-
-## Permission Overrides
-
-Change sandbox permissions by editing env files outside the mounted agent home.
-Local host repos can own these files without changing this generic repo.
-
-The launcher reads:
-
-```text
-~/.agent-sandbox/config.env
-~/.agent-sandbox/permissions.d/*.env
-```
-
-Those files are outside the mounted agent home, so the agent cannot edit them by
-default.
-
-Add a writable mount:
-
-```sh
-mkdir -p ~/.agent-sandbox/permissions.d
-cat > ~/.agent-sandbox/permissions.d/local.env <<'EOF'
-AGENT_EXTRA_MOUNTS="${AGENT_EXTRA_MOUNTS:+$AGENT_EXTRA_MOUNTS:}$HOME/.config/niri:$HOME/Server/Igloo"
-EOF
-```
-
-Or let a dotfiles repo own the local policy source and install it:
-
-```sh
-install -d -m 700 ~/.agent-sandbox ~/.agent-sandbox/permissions.d
-install -m 600 apps/agent-sandbox/permissions.d/desktop.env \
-  ~/.agent-sandbox/permissions.d/desktop.env
-```
-
-Pin a mode explicitly:
-
-```sh
-cat > ~/.agent-sandbox/config.env <<'EOF'
-AGENT_SANDBOX=strict
-EOF
-```
-
-Strict is already the built-in default. Use `AGENT_SANDBOX=comfortable` only if
-you want the agent to be able to edit the sandbox repo during normal runs.
-
-Use a less broad network mode:
-
-```sh
-cat >> ~/.agent-sandbox/config.env <<'EOF'
-AGENT_NETWORK=slirp4netns
-EOF
-```
-
-These files are trusted host policy. They are the intended place for
-machine-specific permissions such as desktop configs or local service checkouts.
-Keep those defaults out of the open-source repo.
-
-If you mount the dotfiles repo read/write, the agent can edit the policy source
-stored there. It still cannot edit the installed host policy under
-`~/.agent-sandbox` unless you mount that directory too.
-
-## Browser State
-
-Playwright browsers are baked into the image. Put persistent browser auth in the
-agent home, for example:
-
-```text
-~/.agent-sandbox/home/.config/agent-browser
-```
-
-Do not mount or reuse your host browser profile.
-
-## Android
-
-If host `adb` is installed, the launcher starts the host adb server and the
-container adb client talks to it through:
-
-```sh
-ADB_SERVER_SOCKET=tcp:127.0.0.1:5037
-```
-
-This supports live `adb logcat`, installs, and connected Gradle tests. It also
-gives the agent broad access to attached Android devices.
-
-## What It Can Do
-
-- edit files in mounted project paths
-- run arbitrary commands inside the container
-- use network access according to `AGENT_NETWORK`
-- use `gh` after sandbox-local auth
-- run headless browser work through Playwright
-- install optional host Desktop adapters for exact supported package layouts
-- use adb if host adb is available
-
-## What It Cannot Do By Default
-
-- read your normal host home
-- read host browser profiles or cookies
-- read host keyrings
-- inspect host windows through Wayland or window-manager IPC
-- use session D-Bus
-- install OS packages during normal runs
-- restart host services
-- generically sandbox arbitrary Desktop apps
-- sandbox Electron UI processes started by host-side Desktop adapters
+Disabled mode mounts your real host home read/write. It is not a security
+boundary.
 
 ## Limits
 
-Do not rely on command deny lists for privacy. The real boundary is the set of
-mounted filesystems, network mode, and any explicit host brokers you add.
-
-If a path is mounted read/write, the agent can list, search, read, edit, or
-delete files there.
-
-To add native tools, edit `Containerfile` and rebuild:
-
-```sh
-agent build-image
-```
+The boundary is the set of mounted folders, the Podman network mode, and any
+host brokers you add. If a folder is mounted read/write, the agent can read,
+edit, or delete files there.
