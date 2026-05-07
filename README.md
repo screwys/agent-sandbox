@@ -37,7 +37,7 @@ agent exec rg TODO ~/Projects
 
 This wrapper only sandboxes processes launched through it.
 
-`agent sandbox enable` only clears a disabled-mode grant for future `agent ...`
+`agent sandbox on` only clears a disabled-mode grant for future `agent ...`
 runs. It does not move an already-running Codex Desktop/App session into the
 container.
 
@@ -104,22 +104,22 @@ Or intentionally enter disabled mode first.
 Disabled mode is a temporary host-granted escape hatch:
 
 ```sh
-agent sandbox disable 240m
+agent sandbox off 240m
 AGENT_SANDBOX=disabled agent shell
 agent sandbox status
-agent sandbox enable
+agent sandbox on
 ```
 
-The `agent sandbox disable` command must be run from an interactive host
+The `agent sandbox off` command must be run from an interactive host
 terminal and is capped at 240 minutes. It refuses to run from inside a
 container.
 
-Permanent disable is explicit:
+Turning the sandbox off permanently is explicit:
 
 ```sh
-agent sandbox disable --forever
+agent sandbox off --forever
 AGENT_SANDBOX=disabled agent shell
-agent sandbox enable
+agent sandbox on
 ```
 
 Disabled mode mounts your real host home read/write into the container. It still
@@ -130,7 +130,7 @@ rewrite installed host policy directly.
 Disabled mode is not a security boundary. In that mode the agent can edit host
 files, including this repo and the symlinked launcher target. `--forever`
 therefore means you are choosing to keep that broad access available until you
-run `agent sandbox enable`.
+run `agent sandbox on`.
 
 ## Configuration
 

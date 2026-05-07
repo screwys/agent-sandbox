@@ -42,10 +42,10 @@ commands:
   shell                   open an interactive shell
   codex [ARG...]          run Codex CLI inside the sandbox
   exec COMMAND [ARG...]   run an arbitrary command inside the sandbox
-  sandbox disable [240m]  allow disabled sandbox mode from a host terminal
-  sandbox disable --forever
-  sandbox enable          clear the disabled sandbox lease
-  sandbox status          print disabled sandbox lease status
+  sandbox off [240m]      allow disabled sandbox mode from a host terminal
+  sandbox off --forever
+  sandbox on              return to normal sandbox mode
+  sandbox status          print sandbox status
   doctor                  print basic readiness checks
 EOF
 }
@@ -67,7 +67,7 @@ running_inside_container() {
 
 require_host_terminal() {
     if running_inside_container; then
-        printf 'sandbox disable controls must be run from an interactive host terminal\n' >&2
+        printf 'sandbox controls must be run from an interactive host terminal\n' >&2
         exit 2
     fi
 
@@ -76,7 +76,7 @@ require_host_terminal() {
     fi
 
     if [ ! -t 0 ] || [ ! -t 1 ]; then
-        printf 'sandbox disable controls must be run from an interactive host terminal\n' >&2
+        printf 'sandbox controls must be run from an interactive host terminal\n' >&2
         exit 2
     fi
 }
@@ -120,7 +120,7 @@ parse_duration_seconds() {
 
     if [ "$seconds" -gt "$SANDBOX_DISABLE_MAX_SECONDS" ]; then
         max_minutes=$((SANDBOX_DISABLE_MAX_SECONDS / 60))
-        printf 'sandbox disable duration maximum is %sm\n' "$max_minutes" >&2
+        printf 'sandbox off duration maximum is %sm\n' "$max_minutes" >&2
         exit 2
     fi
 
@@ -175,13 +175,13 @@ sandbox_lease_summary() {
 
     remaining="$(sandbox_disable_remaining)"
     if [ "$remaining" = "forever" ]; then
-        printf 'sandbox disable lease: active (forever)\n'
+        printf 'sandbox: off (forever)\n'
     elif [ "$remaining" -gt 0 ]; then
         until="$(sandbox_disabled_until)"
         expires="$(date -d "@$until" --iso-8601=seconds 2>/dev/null || printf '@%s' "$until")"
-        printf 'sandbox disable lease: active (%ss remaining, expires %s)\n' "$remaining" "$expires"
+        printf 'sandbox: off (%ss remaining, until %s)\n' "$remaining" "$expires"
     else
-        printf 'sandbox disable lease: inactive\n'
+        printf 'sandbox: on\n'
     fi
 }
 
@@ -210,7 +210,7 @@ sandbox_disable() {
 sandbox_enable() {
     require_host_terminal
     rm -f "$SANDBOX_DISABLED_UNTIL_FILE"
-    printf 'sandbox disable lease: inactive\n'
+    printf 'sandbox: on\n'
 }
 
 require_active_sandbox_disable() {
@@ -223,7 +223,7 @@ require_active_sandbox_disable() {
     fi
 
     if [ "$remaining" -le 0 ]; then
-        printf 'no active sandbox disable lease; run `agent sandbox disable 240m` from a host terminal first\n' >&2
+        printf 'sandbox is on; run `agent sandbox off 240m` from a host terminal first\n' >&2
         exit 2
     fi
 
@@ -507,11 +507,11 @@ case "$cmd" in
         shift
         sandbox_cmd="${1:-status}"
         case "$sandbox_cmd" in
-            disable)
+            off|disable)
                 shift
                 sandbox_disable "${1:-240m}"
                 ;;
-            enable)
+            on|enable)
                 shift
                 sandbox_enable
                 ;;

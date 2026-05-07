@@ -29,47 +29,54 @@ assert_contains() {
 }
 
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox disable lease: inactive"
+assert_contains "$status" "sandbox: on"
 
-run_agent sandbox disable 2m >/dev/null
+run_agent sandbox off 2m >/dev/null
 lease_file="$HOME/.agent-sandbox/host-control/sandbox-disabled-until"
 test -f "$lease_file"
 
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox disable lease: active"
+assert_contains "$status" "sandbox: off"
 
-run_agent sandbox disable 240m >/dev/null
+run_agent sandbox off 240m >/dev/null
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox disable lease: active"
-run_agent sandbox enable >/dev/null
+assert_contains "$status" "sandbox: off"
+run_agent sandbox on >/dev/null
 
-if run_agent sandbox disable 241m >/tmp/agent-sandbox-too-long.out 2>&1; then
+if run_agent sandbox off 241m >/tmp/agent-sandbox-too-long.out 2>&1; then
     cat /tmp/agent-sandbox-too-long.out >&2
-    printf 'expected sandbox disable 241m to fail\n' >&2
+    printf 'expected sandbox off 241m to fail\n' >&2
     exit 1
 fi
 assert_contains "$(cat /tmp/agent-sandbox-too-long.out)" "maximum is 240m"
 
-run_agent sandbox disable --forever >/dev/null
+run_agent sandbox off --forever >/dev/null
 lease_contents="$(cat "$lease_file")"
 test "$lease_contents" = "forever"
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox disable lease: active (forever)"
+assert_contains "$status" "sandbox: off (forever)"
 
+run_agent sandbox on >/dev/null
+status="$(run_agent sandbox status)"
+assert_contains "$status" "sandbox: on"
+
+run_agent sandbox disable 1m >/dev/null
+status="$(run_agent sandbox status)"
+assert_contains "$status" "sandbox: off"
 run_agent sandbox enable >/dev/null
 status="$(run_agent sandbox status)"
-assert_contains "$status" "sandbox disable lease: inactive"
+assert_contains "$status" "sandbox: on"
 
 if AGENT_SANDBOX=disabled run_agent exec true >/tmp/agent-sandbox-disabled.out 2>&1; then
     cat /tmp/agent-sandbox-disabled.out >&2
-    printf 'expected disabled mode without a lease to fail\n' >&2
+    printf 'expected disabled mode while sandbox is on to fail\n' >&2
     exit 1
 fi
-assert_contains "$(cat /tmp/agent-sandbox-disabled.out)" "no active sandbox disable lease"
+assert_contains "$(cat /tmp/agent-sandbox-disabled.out)" "sandbox is on"
 
-if AGENT_FORCE_CONTAINER=1 run_agent sandbox disable 1m >/tmp/agent-sandbox-container.out 2>&1; then
+if AGENT_FORCE_CONTAINER=1 run_agent sandbox off 1m >/tmp/agent-sandbox-container.out 2>&1; then
     cat /tmp/agent-sandbox-container.out >&2
-    printf 'expected sandbox disable inside container to fail\n' >&2
+    printf 'expected sandbox off inside container to fail\n' >&2
     exit 1
 fi
 assert_contains "$(cat /tmp/agent-sandbox-container.out)" "host terminal"
