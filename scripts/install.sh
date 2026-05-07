@@ -5,8 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO="${AGENT_REPO:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
 BUILD_IMAGE=0
 SETUP_ANDROID_SDK=0
-INSTALL_CODEX_AGENT_SHIM="${INSTALL_CODEX_AGENT_SHIM:-1}"
-INSTALL_CODEX_DESKTOP_LAUNCHER="${INSTALL_CODEX_DESKTOP_LAUNCHER:-1}"
+INSTALL_CODEX_AGENT_SHIM="${INSTALL_CODEX_AGENT_SHIM:-0}"
+INSTALL_CODEX_DESKTOP_LAUNCHER="${INSTALL_CODEX_DESKTOP_LAUNCHER:-0}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-$HOME/.agent-sandbox}"
 
 usage() {
@@ -21,9 +21,9 @@ options:
 environment:
   AGENT_REPO                  repo path (default: parent of this script)
   AGENT_STATE_DIR             state/config dir (default: ~/.agent-sandbox)
-  INSTALL_CODEX_AGENT_SHIM    install ~/.local/bin/codex shim (default: 1)
+  INSTALL_CODEX_AGENT_SHIM    install ~/.local/bin/codex shim (default: 0)
   INSTALL_CODEX_DESKTOP_LAUNCHER
-                              install sandboxed Codex desktop launcher (default: 1)
+                              install sandboxed Codex desktop launcher (default: 0)
 EOF
 }
 
@@ -48,6 +48,25 @@ link_file() {
     mkdir -p "$(dirname "$dest")"
     ln -sf "$src" "$dest"
     echo "LINK: $dest -> $src"
+}
+
+remove_owned_symlink() {
+    local dest="$1"
+    local src="$2"
+
+    if [ -L "$dest" ] && [ "$(readlink -f "$dest" 2>/dev/null || true)" = "$src" ]; then
+        rm -f "$dest"
+        echo "REMOVE: $dest"
+    fi
+}
+
+remove_owned_desktop_entry() {
+    local dest="$1"
+
+    if [ -f "$dest" ] && grep -q '^Exec=agent-codex-desktop %U$' "$dest"; then
+        rm -f "$dest"
+        echo "REMOVE: $dest"
+    fi
 }
 
 while [ $# -gt 0 ]; do
@@ -95,6 +114,7 @@ if truthy "$INSTALL_CODEX_AGENT_SHIM"; then
     link_file bin/codex "$HOME/.local/bin/codex"
     echo "CONFIG: codex shim -> agent codex"
 else
+    remove_owned_symlink "$HOME/.local/bin/codex" "$REPO/bin/codex"
     echo "SKIP: codex PATH shim disabled by INSTALL_CODEX_AGENT_SHIM=$INSTALL_CODEX_AGENT_SHIM"
 fi
 
@@ -104,6 +124,7 @@ if truthy "$INSTALL_CODEX_DESKTOP_LAUNCHER"; then
         "$HOME/.local/share/applications/agent-codex-desktop.desktop"
     echo "DESKTOP: $HOME/.local/share/applications/agent-codex-desktop.desktop"
 else
+    remove_owned_desktop_entry "$HOME/.local/share/applications/agent-codex-desktop.desktop"
     echo "SKIP: desktop launcher disabled by INSTALL_CODEX_DESKTOP_LAUNCHER=$INSTALL_CODEX_DESKTOP_LAUNCHER"
 fi
 

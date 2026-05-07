@@ -25,8 +25,11 @@ cd ~/Projects/agent-sandbox
 agent doctor
 ```
 
-This installs `agent`, `agent-codex`, `agent-codex-desktop`, and the
-`Codex (Agent Sandbox)` desktop entry.
+This installs `agent`, `agent-codex`, and `agent-codex-desktop`.
+
+It does not shadow a host-native `codex` command by default. If you really want
+plain `codex` to enter the sandbox, rerun install with
+`INSTALL_CODEX_AGENT_SHIM=1`.
 
 ## Use
 
@@ -34,7 +37,6 @@ This installs `agent`, `agent-codex`, `agent-codex-desktop`, and the
 agent shell
 agent codex
 agent-codex
-agent-codex-desktop
 agent exec rg TODO ~/Projects
 ```
 
@@ -60,10 +62,9 @@ For sandboxed desktop work, use:
 agent-codex-desktop
 ```
 
-The installer adds a `Codex (Agent Sandbox)` desktop entry that runs that
-wrapper. It starts the desktop app inside the container and mounts only narrow
-GUI sockets for display/audio. It does not mount the session D-Bus or
-window-manager IPC.
+This starts the desktop app inside the container and mounts only narrow GUI
+sockets for display/audio. It does not mount the session D-Bus or window-manager
+IPC.
 
 The host `/usr/bin/codex-desktop` app is not reused. The desktop app must exist
 inside the agent home or image.
@@ -78,6 +79,13 @@ agent-codex-desktop
 That clones [ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux)
 under `~/.agent-sandbox/home/.local/share/codex-desktop-linux` and builds its
 `codex-app/start.sh` launcher inside the sandbox.
+
+The desktop launcher is opt-in because it is broken until that app exists
+inside the sandbox:
+
+```sh
+INSTALL_CODEX_DESKTOP_LAUNCHER=1 ./scripts/install.sh
+```
 
 ## GitHub Auth
 
