@@ -33,6 +33,26 @@ agent codex
 agent exec rg TODO ~/Projects
 ```
 
+## Codex App And Desktop
+
+This wrapper only sandboxes processes launched through it.
+
+`agent sandbox enable` only clears a disabled-mode grant for future `agent ...`
+runs. It does not move an already-running Codex Desktop/App session into the
+container.
+
+If Codex App was started normally, that session is host-runtime. Use one of
+these for sandboxed CLI work:
+
+```sh
+agent codex
+agent-codex
+```
+
+A sandboxed desktop experience needs a desktop launcher that starts
+`codex-desktop-linux` through this wrapper. Until that exists and is used, the
+vendor desktop app is outside this sandbox.
+
 ## GitHub Auth
 
 Authenticate inside the sandbox. Host GitHub auth is not copied.
@@ -63,15 +83,23 @@ That matters because `scripts/install.sh` installs `~/.local/bin/agent` as a
 symlink to this repo. If an agent can edit this repo, it can change the host
 command that future terminals will run.
 
-Comfortable mode removes that self-protection:
+Comfortable mode keeps that self-protection:
 
 ```sh
 AGENT_SANDBOX=comfortable agent shell
 ```
 
-It mounts `~/Projects` read/write as one tree. If this repo is inside
-`~/Projects`, the agent can edit the launcher, image definition, and install
-scripts. Use it for development on the sandbox itself when you accept that risk.
+It still mounts this launcher repo read-only. Comfortable mode is not the way to
+let an agent edit the sandbox rules.
+
+To edit this repo, use a host terminal:
+
+```sh
+cd ~/Projects/agent-sandbox
+$EDITOR README.md bin/agent
+```
+
+Or intentionally enter disabled mode first.
 
 Disabled mode is a temporary host-granted escape hatch:
 
@@ -121,6 +149,9 @@ AGENT_EXTRA_MOUNTS=/path/a:/path/b
   Podman network mode if you do not want host-local network access.
 - `AGENT_EXTRA_MOUNTS` adds extra writable paths. Every extra path is fully
   readable, searchable, and editable by the agent.
+
+In normal modes, extra mounts that contain this launcher repo are skipped. Use a
+host terminal or disabled mode when you want to edit the sandbox itself.
 
 Host-control grants live under:
 

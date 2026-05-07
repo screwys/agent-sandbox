@@ -298,6 +298,29 @@ add_mount_if_exists() {
     fi
 }
 
+canonical_path() {
+    readlink -f "$1" 2>/dev/null || realpath -m "$1"
+}
+
+mount_covers_repo() {
+    local src="$1"
+    local src_real
+    local repo_real
+
+    [ -e "$src" ] || return 1
+
+    src_real="$(canonical_path "$src")"
+    repo_real="$(canonical_path "$REPO")"
+
+    [ "$src_real" = "$repo_real" ] && return 0
+    case "$repo_real/" in
+        "$src_real"/*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 add_extra_mounts() {
     local extra
     local old_ifs
@@ -312,6 +335,10 @@ add_extra_mounts() {
 
     for extra in "${extra_mounts[@]}"; do
         [ -n "$extra" ] || continue
+        if [ "$AGENT_SANDBOX" != "disabled" ] && mount_covers_repo "$extra"; then
+            printf 'skipping extra mount that covers protected launcher repo: %s\n' "$extra" >&2
+            continue
+        fi
         add_mount_if_exists "$extra"
     done
 }
@@ -321,25 +348,20 @@ mount_projects() {
     local protected
     local child
 
-    if [ "$AGENT_SANDBOX" = "strict" ]; then
-        case "$REPO/" in
-            "$PROJECTS_DIR"/*)
-                relative="${REPO#$PROJECTS_DIR/}"
-                protected="$PROJECTS_DIR/${relative%%/*}"
-                while IFS= read -r -d '' child; do
-                    [ "$child" = "$protected" ] && continue
-                    add_mount_if_exists "$child"
-                done < <(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -print0)
-                add_mount_if_exists "$REPO" "$REPO" "ro"
-                return 0
-                ;;
-        esac
-    fi
+    case "$REPO/" in
+        "$PROJECTS_DIR"/*)
+            relative="${REPO#$PROJECTS_DIR/}"
+            protected="$PROJECTS_DIR/${relative%%/*}"
+            while IFS= read -r -d '' child; do
+                [ "$child" = "$protected" ] && continue
+                add_mount_if_exists "$child"
+            done < <(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -print0)
+            add_mount_if_exists "$REPO" "$REPO" "ro"
+            return 0
+            ;;
+    esac
 
     add_mount_if_exists "$PROJECTS_DIR"
-    if [ "$AGENT_SANDBOX" = "strict" ]; then
-        add_mount_if_exists "$REPO" "$REPO" "ro"
-    fi
 }
 
 mount_disabled_filesystems() {
