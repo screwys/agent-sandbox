@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO="${AGENT_REPO:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
+DEFAULT_STATE_DIR="$HOME/.agent-sandbox"
+
+CONFIG_FILE="${AGENT_CONFIG:-$DEFAULT_STATE_DIR/config.env}"
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$CONFIG_FILE"
+fi
+
+STATE_DIR="${AGENT_STATE_DIR:-$DEFAULT_STATE_DIR}"
+PERMISSIONS_DIR="${AGENT_PERMISSIONS_DIR:-$STATE_DIR/permissions.d}"
+if [ -d "$PERMISSIONS_DIR" ]; then
+    for permissions_file in "$PERMISSIONS_DIR"/*.env; do
+        [ -e "$permissions_file" ] || continue
+        # shellcheck disable=SC1090
+        . "$permissions_file"
+    done
+fi
+
+IMAGE="${AGENT_IMAGE:-localhost/agent-sandbox:latest}"
+AGENT_HOME="${AGENT_HOME:-$STATE_DIR/home}"
+PROJECTS_DIR="${AGENT_PROJECTS_DIR:-$HOME/Projects}"
+CONTAINERFILE="${AGENT_CONTAINERFILE:-$REPO/Containerfile}"
+CONTAINER_CONTEXT="${AGENT_CONTEXT:-$REPO}"
+AGENT_NETWORK="${AGENT_NETWORK:-host}"
+AGENT_SANDBOX="${AGENT_SANDBOX:-comfortable}"
+
+usage() {
+    cat <<'EOF'
+usage: agent COMMAND [ARG...]
+
+commands:
+  build-image             build the local agent sandbox image
+  setup-android-sdk       install Android SDK into the agent home
+  shell                   open an interactive shell
+  codex [ARG...]          run Codex CLI inside the sandbox
+  exec COMMAND [ARG...]   run an arbitrary command inside the sandbox
+  doctor                  print basic readiness checks
+EOF
+}
+
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        printf 'missing required command: %s\n' "$1" >&2
+        exit 127
+    }
+}
+
+ensure_dirs() {
+    case "$AGENT_SANDBOX" in
+        comfortable|strict)
+            ;;
+        *)
+            printf 'invalid AGENT_SANDBOX: %s\n' "$AGENT_SANDBOX" >&2
+            printf 'allowed values: comfortable, strict\n' >&2
+            exit 2
+            ;;
+    esac
+
+    mkdir -p "$AGENT_HOME" \
+        "$AGENT_HOME/.cache" \
+        "$AGENT_HOME/.codex" \
+        "$AGENT_HOME/.config" \
+        "$AGENT_HOME/.gradle" \
+        "$AGENT_HOME/Android" \
+        "$PROJECTS_DIR" \
+        "$PERMISSIONS_DIR" \
+        "$STATE_DIR"
+    if [ "${PROJECTS_DIR#$HOME/}" != "$PROJECTS_DIR" ]; then
+        mkdir -p "$AGENT_HOME/${PROJECTS_DIR#$HOME/}"
+    fi
+    chmod 700 "$AGENT_HOME" "$AGENT_HOME/.codex" "$PERMISSIONS_DIR" "$STATE_DIR"
+    if [ ! -f "$AGENT_HOME/.codex/config.toml" ]; then
+        cat >"$AGENT_HOME/.codex/config.toml" <<'EOF'
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+
+[sandbox_workspace_write]
+network_access = true
+EOF
+        chmod 600 "$AGENT_HOME/.codex/config.toml"
+    fi
+}
+
+build_image() {
+    need_cmd podman
+    podman build -t "$IMAGE" -f "$CONTAINERFILE" "$CONTAINER_CONTEXT"
+}
+
+image_exists() {
+    podman image exists "$IMAGE" >/dev/null 2>&1
+}
+
+ensure_image() {
+    need_cmd podman
+    if ! image_exists; then
+        printf 'agent sandbox image %s is missing; building it now\n' "$IMAGE" >&2
+        build_image
+    fi
+}
+
+start_adb_server() {
+    if command -v adb >/dev/null 2>&1; then
+        adb start-server >/dev/null 2>&1 || true
+    fi
+}
+
+add_mount_if_exists() {
+    local src="$1"
+    local dest="${2:-$1}"
+    local mode="${3:-rw}"
+    if [ -e "$src" ]; then
+        PODMAN_ARGS+=(--volume "$src:$dest:$mode")
+    fi
+}
+
+add_extra_mounts() {
+    local extra
+    local old_ifs
+    local -a extra_mounts=()
+
+    [ -n "${AGENT_EXTRA_MOUNTS:-}" ] || return 0
+
+    old_ifs="$IFS"
+    IFS=:
+    read -r -a extra_mounts <<<"$AGENT_EXTRA_MOUNTS"
+    IFS="$old_ifs"
+
+    for extra in "${extra_mounts[@]}"; do
+        [ -n "$extra" ] || continue
+        add_mount_if_exists "$extra"
+    done
+}
+
+mount_projects() {
+    local relative
+    local protected
+    local child
+
+    if [ "$AGENT_SANDBOX" = "strict" ]; then
+        case "$REPO/" in
+            "$PROJECTS_DIR"/*)
+                relative="${REPO#$PROJECTS_DIR/}"
+                protected="$PROJECTS_DIR/${relative%%/*}"
+                while IFS= read -r -d '' child; do
+                    [ "$child" = "$protected" ] && continue
+                    add_mount_if_exists "$child"
+                done < <(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -print0)
+                add_mount_if_exists "$REPO" "$REPO" "ro"
+                return 0
+                ;;
+        esac
+    fi
+
+    add_mount_if_exists "$PROJECTS_DIR"
+    if [ "$AGENT_SANDBOX" = "strict" ]; then
+        add_mount_if_exists "$REPO" "$REPO" "ro"
+    fi
+}
+
+workdir_for_container() {
+    case "$PWD/" in
+        "$PROJECTS_DIR"/*)
+            printf '%s\n' "$PWD"
+            ;;
+        *)
+            printf '%s\n' "$PROJECTS_DIR"
+            ;;
+    esac
+}
+
+run_container() {
+    ensure_dirs
+    ensure_image
+    start_adb_server
+
+    PODMAN_ARGS=(
+        run
+        --rm
+        --userns=keep-id
+        --network="$AGENT_NETWORK"
+        --read-only
+        --security-opt=no-new-privileges
+        --security-opt=label=disable
+        --cap-drop=all
+        --pids-limit=4096
+        --tmpfs /tmp:rw,nosuid,nodev,mode=1777
+        --tmpfs /var/tmp:rw,nosuid,nodev,mode=1777
+        --env "HOME=$HOME"
+        --env "USER=$USER"
+        --env "LOGNAME=$USER"
+        --env "CODEX_HOME=$HOME/.codex"
+        --env "ANDROID_HOME=$HOME/Android/Sdk"
+        --env "ANDROID_SDK_ROOT=$HOME/Android/Sdk"
+        --env "GRADLE_USER_HOME=$HOME/.gradle"
+        --env "ADB_SERVER_SOCKET=tcp:127.0.0.1:5037"
+        --volume "$AGENT_HOME:$HOME:rw"
+        --workdir "$(workdir_for_container)"
+    )
+
+    if [ -t 0 ]; then
+        PODMAN_ARGS+=(--interactive)
+    fi
+    if [ -t 0 ] && [ -t 1 ]; then
+        PODMAN_ARGS+=(--tty)
+    fi
+
+    mount_projects
+    add_extra_mounts
+
+    exec podman "${PODMAN_ARGS[@]}" "$IMAGE" "$@"
+}
+
+setup_android_sdk() {
+    ensure_dirs
+    "$REPO/scripts/setup-android-sdk" "$AGENT_HOME/Android/Sdk" "$@"
+}
+
+doctor() {
+    printf 'image: '
+    if image_exists; then
+        printf 'present (%s)\n' "$IMAGE"
+    else
+        printf 'missing (%s)\n' "$IMAGE"
+    fi
+    printf 'agent home: %s\n' "$AGENT_HOME"
+    printf 'config file: %s ' "$CONFIG_FILE"
+    if [ -f "$CONFIG_FILE" ]; then
+        printf '(present)\n'
+    else
+        printf '(missing)\n'
+    fi
+    printf 'permissions dir: %s\n' "$PERMISSIONS_DIR"
+    printf 'projects mount: %s ' "$PROJECTS_DIR"
+    if [ -d "$PROJECTS_DIR" ]; then
+        printf '(present)\n'
+    else
+        printf '(missing)\n'
+    fi
+    printf 'network: %s\n' "$AGENT_NETWORK"
+    printf 'sandbox mode: %s\n' "$AGENT_SANDBOX"
+    printf 'adb server: '
+    if command -v adb >/dev/null 2>&1 && adb devices >/dev/null 2>&1; then
+        printf 'reachable\n'
+    else
+        printf 'not reachable\n'
+    fi
+}
+
+cmd="${1:-}"
+case "$cmd" in
+    build-image)
+        build_image
+        ;;
+    setup-android-sdk)
+        shift
+        setup_android_sdk "$@"
+        ;;
+    shell)
+        shift
+        run_container bash "$@"
+        ;;
+    codex)
+        shift
+        run_container codex "$@"
+        ;;
+    exec)
+        shift
+        [ $# -gt 0 ] || {
+            usage >&2
+            exit 2
+        }
+        run_container "$@"
+        ;;
+    doctor)
+        doctor
+        ;;
+    ""|-h|--help|help)
+        usage
+        ;;
+    *)
+        printf 'unknown command: %s\n' "$cmd" >&2
+        usage >&2
+        exit 2
+        ;;
+esac
