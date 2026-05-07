@@ -1,2 +1,2 @@
 #!/usr/bin/env sh
-exec agent codex "$@"
+AGENT_PRESERVE_STDIN="${AGENT_PRESERVE_STDIN:-1}" exec agent codex "$@"

@@ -40,6 +40,9 @@ agent-codex
 agent exec rg TODO ~/Projects
 ```
 
+`agent-codex` preserves stdio for Codex Desktop app-server mode, so it can be
+used as a `CODEX_CLI_PATH` target.
+
 ## Codex App And Desktop
 
 This wrapper only sandboxes processes launched through it.

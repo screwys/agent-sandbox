@@ -485,7 +485,7 @@ run_container() {
         PODMAN_ARGS+=(--read-only)
     fi
 
-    if [ -t 0 ]; then
+    if [ -t 0 ] || [ "${AGENT_PRESERVE_STDIN:-}" = "1" ]; then
         PODMAN_ARGS+=(--interactive)
     fi
     if [ -t 0 ] && [ -t 1 ]; then
