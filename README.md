@@ -1,6 +1,8 @@
 # Agent Sandbox
 
-A small Podman sandbox for coding agents.
+A small Podman sandbox for CLI coding agents.
+
+Default guarantee: sandboxed CLI agents with bounded filesystem access.
 
 Default behavior:
 
@@ -14,6 +16,9 @@ Default behavior:
 - Codex CLI, `gh`, adb, Java, Go, Python, ripgrep, fd, SQLite, and Playwright
   browsers in the image
 
+Optional Desktop launchers are host-side adapters. They are convenience wrappers
+for specific app/package layouts, not a generic Desktop sandbox promise.
+
 This is a practical development boundary, not a VM.
 
 ## Install
@@ -25,7 +30,7 @@ cd ~/Projects/agent-sandbox
 agent doctor
 ```
 
-This installs `agent`, `agent-codex`, and `agent-codex-desktop`.
+This installs `agent` and `agent-codex`.
 
 It does not shadow a host-native `codex` command by default. If you really want
 plain `codex` to enter the sandbox, rerun install with
@@ -43,52 +48,86 @@ agent exec rg TODO ~/Projects
 `agent-codex` preserves stdio for Codex Desktop app-server mode, so it can be
 used as a `CODEX_CLI_PATH` target.
 
-## Codex App And Desktop
+## Desktop Adapters
 
-This wrapper only sandboxes processes launched through it.
+Desktop support is intentionally outside the core guarantee.
 
-`agent sandbox on` only clears a disabled-mode grant for future `agent ...`
-runs. It does not move an already-running Codex Desktop/App session into the
-container.
+The core model owns:
 
-If Codex App was started normally, that session is host-runtime. Use one of
-these for sandboxed CLI work:
+- `agent`
+- `agent shell`
+- `agent-codex`
+- Podman image/build behavior
+- mounts and permission overrides
+- disable leases
+- config overrides
 
-```sh
-agent codex
-agent-codex
-```
+Desktop launchers are host-side adapters installed outside the sandbox. In
+normal modes the agent cannot edit `~/.local/bin` or
+`~/.local/share/applications`, so generated host launcher files are read-only to
+the agent by default.
 
-For sandboxed desktop work, use:
-
-```sh
-agent-codex-desktop
-```
-
-This starts the desktop app inside the container and mounts only narrow GUI
-sockets for display/audio. It does not mount the session D-Bus or window-manager
-IPC.
-
-The host `/usr/bin/codex-desktop` app is not reused. The desktop app must exist
-inside the agent home or image.
-
-To build the community Linux desktop app into the agent home:
+Available adapter commands:
 
 ```sh
-agent setup-codex-desktop
-agent-codex-desktop
+agent desktop detect codex
+agent desktop validate codex
+agent desktop install codex
+
+agent desktop detect claude
+agent desktop validate claude
+agent desktop install claude
 ```
 
-That clones [ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux)
-under `~/.agent-sandbox/home/.local/share/codex-desktop-linux` and builds its
-`codex-app/start.sh` launcher inside the sandbox.
+Each adapter defines its own detection, validation, wrapper path, and `.desktop`
+path. If the detected package layout differs from the exact supported layout,
+validation and install fail with an unsupported-layout error, and no launcher is
+generated.
 
-The desktop launcher is opt-in because it is broken until that app exists
-inside the sandbox:
+### Codex Desktop
+
+The Codex adapter is experimental and package-specific. It supports the current
+Arch-style package layout only:
+
+```text
+/usr/bin/codex-desktop
+/usr/lib/electron39/electron
+/usr/lib/openai-codex-desktop/resources/app.asar
+/usr/lib/openai-codex-desktop/content/webview
+```
+
+Install it with:
 
 ```sh
-INSTALL_CODEX_DESKTOP_LAUNCHER=1 ./scripts/install.sh
+agent desktop validate codex
+agent desktop install codex
 ```
+
+That writes:
+
+```text
+~/.local/bin/codex-desktop-sandboxed
+~/.local/share/applications/codex-sandboxed.desktop
+```
+
+The generated launcher appears as `Codex (Sandboxed)`. It runs host-native
+Electron, starts a separate webview server on `127.0.0.1:5176`, sets
+`XDG_CONFIG_HOME=$HOME/.config/codex-sandboxed`, and sets
+`CODEX_CLI_PATH=$HOME/.local/bin/agent-codex`.
+
+Electron itself is not sandboxed by this project. The sandboxed part is the
+Codex CLI/app-server subprocess reached through `agent-codex` and Podman.
+
+Local chats are not shared between native Codex Desktop and `Codex (Sandboxed)`
+by default. Shared local state defeats isolation. If that workflow becomes
+needed, it should be a host-only import/export tool instead of a shared profile.
+
+### Claude Desktop
+
+The Claude adapter command exists so callers get a stable interface and a clear
+unsupported error. No Claude Desktop package layout is registered yet because no
+stable launcher contract is known for CLI path, profile/config dir, or
+app-server transport.
 
 ## GitHub Auth
 
@@ -177,7 +216,6 @@ AGENT_STATE_DIR=~/.agent-sandbox
 AGENT_IMAGE=localhost/agent-sandbox:latest
 AGENT_NETWORK=host
 AGENT_EXTRA_MOUNTS=/path/a:/path/b
-AGENT_DESKTOP_COMMAND=/path/or/command
 ```
 
 - `AGENT_PROJECTS_DIR` is the default writable project mount.
@@ -187,7 +225,6 @@ AGENT_DESKTOP_COMMAND=/path/or/command
   Podman network mode if you do not want host-local network access.
 - `AGENT_EXTRA_MOUNTS` adds extra writable paths. Every extra path is fully
   readable, searchable, and editable by the agent.
-- `AGENT_DESKTOP_COMMAND` overrides the command used by `agent desktop`.
 
 In normal modes, extra mounts that contain this launcher repo are skipped. Use a
 host terminal or disabled mode when you want to edit the sandbox itself.
@@ -289,7 +326,7 @@ gives the agent broad access to attached Android devices.
 - use network access according to `AGENT_NETWORK`
 - use `gh` after sandbox-local auth
 - run headless browser work through Playwright
-- run Codex Desktop if the desktop app is installed inside the sandbox
+- install optional host Desktop adapters for exact supported package layouts
 - use adb if host adb is available
 
 ## What It Cannot Do By Default
@@ -301,6 +338,8 @@ gives the agent broad access to attached Android devices.
 - use session D-Bus
 - install OS packages during normal runs
 - restart host services
+- generically sandbox arbitrary Desktop apps
+- sandbox Electron UI processes started by host-side Desktop adapters
 
 ## Limits
 

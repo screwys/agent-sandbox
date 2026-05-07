@@ -23,7 +23,7 @@ environment:
   AGENT_STATE_DIR             state/config dir (default: ~/.agent-sandbox)
   INSTALL_CODEX_AGENT_SHIM    install ~/.local/bin/codex shim (default: 0)
   INSTALL_CODEX_DESKTOP_LAUNCHER
-                              install sandboxed Codex desktop launcher (default: 0)
+                              deprecated; use `agent desktop install codex`
 EOF
 }
 
@@ -53,8 +53,10 @@ link_file() {
 remove_owned_symlink() {
     local dest="$1"
     local src="$2"
+    local target
 
-    if [ -L "$dest" ] && [ "$(readlink -f "$dest" 2>/dev/null || true)" = "$src" ]; then
+    target="$(readlink "$dest" 2>/dev/null || true)"
+    if [ -L "$dest" ] && { [ "$target" = "$src" ] || [ "$(readlink -f "$dest" 2>/dev/null || true)" = "$src" ]; }; then
         rm -f "$dest"
         echo "REMOVE: $dest"
     fi
@@ -99,16 +101,13 @@ done
 chmod +x \
     "$REPO/bin/agent" \
     "$REPO/bin/agent-codex" \
-    "$REPO/bin/agent-codex-desktop" \
     "$REPO/bin/codex" \
-    "$REPO/scripts/setup-android-sdk" \
-    "$REPO/scripts/setup-codex-desktop-linux"
+    "$REPO/scripts/setup-android-sdk"
 
 install -d -m 700 "$AGENT_STATE_DIR" "$AGENT_STATE_DIR/permissions.d"
 
 link_file bin/agent "$HOME/.local/bin/agent"
 link_file bin/agent-codex "$HOME/.local/bin/agent-codex"
-link_file bin/agent-codex-desktop "$HOME/.local/bin/agent-codex-desktop"
 
 if truthy "$INSTALL_CODEX_AGENT_SHIM"; then
     link_file bin/codex "$HOME/.local/bin/codex"
@@ -118,14 +117,11 @@ else
     echo "SKIP: codex PATH shim disabled by INSTALL_CODEX_AGENT_SHIM=$INSTALL_CODEX_AGENT_SHIM"
 fi
 
+remove_owned_symlink "$HOME/.local/bin/agent-codex-desktop" "$REPO/bin/agent-codex-desktop"
+remove_owned_desktop_entry "$HOME/.local/share/applications/agent-codex-desktop.desktop"
+
 if truthy "$INSTALL_CODEX_DESKTOP_LAUNCHER"; then
-    install -Dm0644 \
-        "$REPO/share/applications/agent-codex-desktop.desktop" \
-        "$HOME/.local/share/applications/agent-codex-desktop.desktop"
-    echo "DESKTOP: $HOME/.local/share/applications/agent-codex-desktop.desktop"
-else
-    remove_owned_desktop_entry "$HOME/.local/share/applications/agent-codex-desktop.desktop"
-    echo "SKIP: desktop launcher disabled by INSTALL_CODEX_DESKTOP_LAUNCHER=$INSTALL_CODEX_DESKTOP_LAUNCHER"
+    echo "SKIP: INSTALL_CODEX_DESKTOP_LAUNCHER is deprecated; run: agent desktop install codex"
 fi
 
 if [ "$BUILD_IMAGE" -eq 1 ]; then

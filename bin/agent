@@ -31,7 +31,6 @@ AGENT_SANDBOX="${AGENT_SANDBOX:-strict}"
 HOST_CONTROL_DIR="${AGENT_HOST_CONTROL_DIR:-$STATE_DIR/host-control}"
 SANDBOX_DISABLED_UNTIL_FILE="$HOST_CONTROL_DIR/sandbox-disabled-until"
 SANDBOX_DISABLE_MAX_SECONDS="${AGENT_SANDBOX_DISABLE_MAX_SECONDS:-14400}"
-DESKTOP_RUN=0
 
 usage() {
     cat <<'EOF'
@@ -40,16 +39,29 @@ usage: agent COMMAND [ARG...]
 commands:
   build-image             build the local agent sandbox image
   setup-android-sdk       install Android SDK into the agent home
-  setup-codex-desktop     build codex-desktop-linux into the agent home
   shell                   open an interactive shell
   codex [ARG...]          run Codex CLI inside the sandbox
-  desktop [ARG...]        run Codex Desktop inside the sandbox
+  desktop COMMAND ADAPTER manage optional host-side Desktop adapters
   exec COMMAND [ARG...]   run an arbitrary command inside the sandbox
   sandbox off [240m]      allow disabled sandbox mode from a host terminal
   sandbox off --forever
   sandbox on              return to normal sandbox mode
   sandbox status          print sandbox status
   doctor                  print basic readiness checks
+EOF
+}
+
+desktop_usage() {
+    cat <<'EOF'
+usage: agent desktop COMMAND ADAPTER
+
+commands:
+  detect codex|claude     print detected host package layout
+  validate codex|claude   verify a supported host package layout
+  install codex|claude    install a host wrapper and .desktop launcher
+
+Desktop adapters are convenience launchers. They run outside the container and
+only point supported app subprocesses at sandboxed CLI/app-server commands.
 EOF
 }
 
@@ -81,6 +93,13 @@ require_host_terminal() {
     if [ ! -t 0 ] || [ ! -t 1 ]; then
         printf 'sandbox controls must be run from an interactive host terminal\n' >&2
         exit 2
+    fi
+}
+
+require_host_runtime_for_desktop() {
+    if running_inside_container; then
+        printf 'desktop adapter commands must be run from a host terminal\n' >&2
+        return 2
     fi
 }
 
@@ -398,46 +417,6 @@ mount_disabled_filesystems() {
     add_mount_if_exists "$AGENT_HOME" "$AGENT_HOME" "rw"
 }
 
-add_desktop_gui_mounts() {
-    local host_runtime="${XDG_RUNTIME_DIR:-}"
-    local wayland_display="${WAYLAND_DISPLAY:-}"
-    local wayland_socket=""
-    local pipewire_socket=""
-    local pulse_socket=""
-
-    if [ -n "$host_runtime" ] && [ -n "$wayland_display" ]; then
-        wayland_socket="$host_runtime/$wayland_display"
-        if [ -S "$wayland_socket" ]; then
-            PODMAN_ARGS+=(--tmpfs /run/agent-gui:rw,nosuid,nodev,mode=700)
-            PODMAN_ARGS+=(--volume "$wayland_socket:/run/agent-gui/$wayland_display:rw")
-            PODMAN_ARGS+=(--env "XDG_RUNTIME_DIR=/run/agent-gui")
-            PODMAN_ARGS+=(--env "WAYLAND_DISPLAY=$wayland_display")
-
-            pipewire_socket="$host_runtime/pipewire-0"
-            if [ -S "$pipewire_socket" ]; then
-                PODMAN_ARGS+=(--volume "$pipewire_socket:/run/agent-gui/pipewire-0:rw")
-            fi
-
-            pulse_socket="$host_runtime/pulse/native"
-            if [ -S "$pulse_socket" ]; then
-                PODMAN_ARGS+=(--volume "$pulse_socket:/run/agent-gui/pulse-native:rw")
-                PODMAN_ARGS+=(--env "PULSE_SERVER=unix:/run/agent-gui/pulse-native")
-            fi
-        fi
-    fi
-
-    if [ -n "${DISPLAY:-}" ] && [ -d /tmp/.X11-unix ]; then
-        PODMAN_ARGS+=(--env "DISPLAY=$DISPLAY")
-        PODMAN_ARGS+=(--volume /tmp/.X11-unix:/tmp/.X11-unix:rw)
-        if [ -n "${XAUTHORITY:-}" ] && [ -f "$XAUTHORITY" ]; then
-            PODMAN_ARGS+=(--env "XAUTHORITY=$XAUTHORITY")
-            PODMAN_ARGS+=(--volume "$XAUTHORITY:$XAUTHORITY:ro")
-        fi
-    fi
-
-    PODMAN_ARGS+=(--env NO_AT_BRIDGE=1)
-}
-
 workdir_for_container() {
     case "$PWD/" in
         "$PROJECTS_DIR"/*)
@@ -478,9 +457,6 @@ run_container() {
         --env "ADB_SERVER_SOCKET=tcp:127.0.0.1:5037"
         --workdir "$(workdir_for_container)"
     )
-    if [ -n "${AGENT_DESKTOP_COMMAND:-}" ]; then
-        PODMAN_ARGS+=(--env "AGENT_DESKTOP_COMMAND=$AGENT_DESKTOP_COMMAND")
-    fi
     if [ "$AGENT_SANDBOX" != "disabled" ]; then
         PODMAN_ARGS+=(--read-only)
     fi
@@ -500,10 +476,6 @@ run_container() {
         add_extra_mounts
     fi
 
-    if [ "$DESKTOP_RUN" -eq 1 ]; then
-        add_desktop_gui_mounts
-    fi
-
     exec podman "${PODMAN_ARGS[@]}" "$IMAGE" "$@"
 }
 
@@ -512,39 +484,443 @@ setup_android_sdk() {
     "$REPO/scripts/setup-android-sdk" "$AGENT_HOME/Android/Sdk" "$@"
 }
 
-setup_codex_desktop() {
-    run_container "$REPO/scripts/setup-codex-desktop-linux" "$@"
+desktop_host_path() {
+    printf '%s%s\n' "${AGENT_DESKTOP_ROOT:-}" "$1"
 }
 
-run_desktop() {
-    DESKTOP_RUN=1
-    run_container bash -lc '
+desktop_dest_bin() {
+    case "$1" in
+        codex)
+            printf '%s/.local/bin/codex-desktop-sandboxed\n' "$HOME"
+            ;;
+        claude)
+            printf '%s/.local/bin/claude-desktop-sandboxed\n' "$HOME"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+desktop_dest_entry() {
+    case "$1" in
+        codex)
+            printf '%s/.local/share/applications/codex-sandboxed.desktop\n' "$HOME"
+            ;;
+        claude)
+            printf '%s/.local/share/applications/claude-sandboxed.desktop\n' "$HOME"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+desktop_set_codex_paths() {
+    CODEX_ADAPTER_ELECTRON="$(desktop_host_path /usr/lib/electron39/electron)"
+    CODEX_ADAPTER_APPDIR="$(desktop_host_path /usr/lib/openai-codex-desktop)"
+    CODEX_ADAPTER_ASAR="$CODEX_ADAPTER_APPDIR/resources/app.asar"
+    CODEX_ADAPTER_WEBVIEW="$CODEX_ADAPTER_APPDIR/content/webview"
+    CODEX_ADAPTER_SYSTEM_LAUNCHER="$(desktop_host_path /usr/bin/codex-desktop)"
+    CODEX_ADAPTER_CLI_PATH="${AGENT_CODEX_CLI_PATH:-$HOME/.local/bin/agent-codex}"
+    CODEX_ADAPTER_CONFIG_HOME="${AGENT_CODEX_DESKTOP_CONFIG_HOME:-$HOME/.config/codex-sandboxed}"
+    CODEX_ADAPTER_PORT="${AGENT_CODEX_DESKTOP_WEBVIEW_PORT:-5176}"
+}
+
+desktop_codex_supported_layout() {
+    desktop_set_codex_paths
+    cat <<EOF
+supported exact layout:
+  system launcher: $CODEX_ADAPTER_SYSTEM_LAUNCHER
+  electron: $CODEX_ADAPTER_ELECTRON
+  app asar: $CODEX_ADAPTER_ASAR
+  webview dir: $CODEX_ADAPTER_WEBVIEW
+  sandboxed CLI: $CODEX_ADAPTER_CLI_PATH
+  profile/config dir: $CODEX_ADAPTER_CONFIG_HOME
+  webview port: $CODEX_ADAPTER_PORT
+EOF
+}
+
+desktop_codex_validation_errors() {
+    local failed=0
+
+    desktop_set_codex_paths
+
+    if [ ! -x "$CODEX_ADAPTER_ELECTRON" ]; then
+        printf '  missing executable: %s\n' "$CODEX_ADAPTER_ELECTRON"
+        failed=1
+    fi
+    if [ ! -f "$CODEX_ADAPTER_ASAR" ]; then
+        printf '  missing app asar: %s\n' "$CODEX_ADAPTER_ASAR"
+        failed=1
+    fi
+    if [ ! -d "$CODEX_ADAPTER_WEBVIEW" ]; then
+        printf '  missing webview dir: %s\n' "$CODEX_ADAPTER_WEBVIEW"
+        failed=1
+    elif ! find "$CODEX_ADAPTER_WEBVIEW" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+        printf '  empty webview dir: %s\n' "$CODEX_ADAPTER_WEBVIEW"
+        failed=1
+    fi
+    if [ ! -x "$CODEX_ADAPTER_SYSTEM_LAUNCHER" ]; then
+        printf '  missing executable system launcher: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
+        failed=1
+    else
+        if ! grep -q 'CODEX_CLI_PATH' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"; then
+            printf '  system launcher does not expose CODEX_CLI_PATH: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
+            failed=1
+        fi
+        if ! grep -q 'ELECTRON_RENDERER_URL' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"; then
+            printf '  system launcher does not expose ELECTRON_RENDERER_URL: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
+            failed=1
+        fi
+        if ! grep -q '5175' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"; then
+            printf '  system launcher does not match the expected fixed port 5175 layout: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
+            failed=1
+        fi
+    fi
+    if [ ! -x "$CODEX_ADAPTER_CLI_PATH" ]; then
+        printf '  missing sandboxed CLI executable: %s\n' "$CODEX_ADAPTER_CLI_PATH"
+        failed=1
+    fi
+
+    return "$failed"
+}
+
+desktop_codex_detect() {
+    local errors=""
+    local status="experimental"
+
+    if ! errors="$(desktop_codex_validation_errors)"; then
+        status="unsupported"
+    fi
+
+    desktop_set_codex_paths
+    cat <<EOF
+adapter: codex
+status: $status
+electron: host-native
+app-server: CODEX_CLI_PATH points at agent-codex
+shared local chats: no
+experimental: yes, package-specific host wrapper
+system launcher: $CODEX_ADAPTER_SYSTEM_LAUNCHER
+electron: $CODEX_ADAPTER_ELECTRON
+app asar: $CODEX_ADAPTER_ASAR
+webview dir: $CODEX_ADAPTER_WEBVIEW
+sandboxed CLI: $CODEX_ADAPTER_CLI_PATH
+profile/config dir: $CODEX_ADAPTER_CONFIG_HOME
+webview port: $CODEX_ADAPTER_PORT
+wrapper: $(desktop_dest_bin codex)
+desktop entry: $(desktop_dest_entry codex)
+EOF
+    if [ -n "$errors" ]; then
+        printf 'detected problems:\n%s\n' "$errors"
+    fi
+}
+
+desktop_codex_validate() {
+    local errors=""
+
+    if ! errors="$(desktop_codex_validation_errors)"; then
+        printf 'unsupported Codex Desktop package layout\n\n' >&2
+        desktop_codex_supported_layout >&2
+        printf '\ndetected problems:\n%s\n' "$errors" >&2
+        printf '\nCodex Desktop support is experimental and limited to this exact package layout.\n' >&2
+        printf 'Electron stays host-native; only the Codex CLI/app-server path is redirected into Podman.\n' >&2
+        return 2
+    fi
+
+    printf 'Codex Desktop adapter validation passed (experimental)\n'
+}
+
+write_codex_wrapper() {
+    local wrapper
+
+    desktop_set_codex_paths
+    wrapper="$(desktop_dest_bin codex)"
+    install -d -m 755 "$(dirname "$wrapper")"
+    cat >"$wrapper" <<EOF
+#!/usr/bin/env bash
 set -euo pipefail
 
-if [ -n "${AGENT_DESKTOP_COMMAND:-}" ]; then
-    exec ${AGENT_DESKTOP_COMMAND} "$@"
-fi
+electron="$CODEX_ADAPTER_ELECTRON"
+app_asar="$CODEX_ADAPTER_ASAR"
+webview_dir="$CODEX_ADAPTER_WEBVIEW"
+webview_port="\${AGENT_CODEX_DESKTOP_WEBVIEW_PORT:-$CODEX_ADAPTER_PORT}"
 
-if [ -x "$HOME/.local/share/codex-desktop-linux/codex-app/start.sh" ]; then
-    exec "$HOME/.local/share/codex-desktop-linux/codex-app/start.sh" "$@"
-fi
-
-for candidate in codex-desktop codex-desktop-linux; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-        exec "$candidate" "$@"
-    fi
-done
-
-cat >&2 <<EOF
-missing Codex Desktop inside the agent image/home
-
-Run:
-  agent setup-codex-desktop
-
-Or set AGENT_DESKTOP_COMMAND to a command available inside the sandbox.
+export CODEX_CLI_PATH="\${CODEX_CLI_PATH:-$CODEX_ADAPTER_CLI_PATH}"
+export XDG_CONFIG_HOME="\${XDG_CONFIG_HOME:-$CODEX_ADAPTER_CONFIG_HOME}"
+export BUILD_FLAVOR="\${BUILD_FLAVOR:-prod}"
+export NODE_ENV="\${NODE_ENV:-production}"
+export ELECTRON_RENDERER_URL="\${ELECTRON_RENDERER_URL:-http://127.0.0.1:\${webview_port}/}"
 EOF
-exit 127
-' agent-desktop "$@"
+    cat >>"$wrapper" <<'EOF'
+
+[[ -x "${electron}" ]] || {
+  echo "missing Electron runtime: ${electron}" >&2
+  exit 1
+}
+[[ -f "${app_asar}" ]] || {
+  echo "missing Codex Desktop app: ${app_asar}" >&2
+  exit 1
+}
+[[ -x "${CODEX_CLI_PATH}" ]] || {
+  echo "missing sandboxed Codex CLI: ${CODEX_CLI_PATH}" >&2
+  echo "run scripts/install.sh or set CODEX_CLI_PATH explicitly" >&2
+  exit 127
+}
+
+mkdir -p "${XDG_CONFIG_HOME}"
+
+http_pid=""
+electron_pid=""
+tmpdir=""
+
+cleanup() {
+  [[ -n "${electron_pid}" ]] && wait "${electron_pid}" 2>/dev/null || true
+  [[ -n "${http_pid}" ]] && kill "${http_pid}" 2>/dev/null || true
+  [[ -n "${http_pid}" ]] && wait "${http_pid}" 2>/dev/null || true
+  [[ -n "${tmpdir}" ]] && rm -rf "${tmpdir}"
+}
+
+forward_signal() {
+  local sig="$1"
+
+  if [[ -n "${electron_pid}" ]] && kill -0 "${electron_pid}" 2>/dev/null; then
+    kill -"${sig}" "${electron_pid}" 2>/dev/null || true
+    wait "${electron_pid}" 2>/dev/null || true
+  fi
+
+  exit 0
+}
+
+trap cleanup EXIT
+trap 'forward_signal HUP' HUP
+trap 'forward_signal INT' INT
+trap 'forward_signal TERM' TERM
+
+if [[ -d "${webview_dir}" ]] && find "${webview_dir}" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+  python_cmd="${PYTHON:-}"
+  if [[ -z "${python_cmd}" ]]; then
+    python_cmd="$(command -v python3 || command -v python || true)"
+  fi
+  [[ -n "${python_cmd}" ]] || {
+    echo "missing python or python3 for local Codex webview server" >&2
+    exit 127
+  }
+
+  tmpdir="$(mktemp -d)"
+  ready_file="${tmpdir}/ready"
+  fail_file="${tmpdir}/fail"
+
+  "${python_cmd}" - "${webview_port}" "${webview_dir}" "${ready_file}" "${fail_file}" >/dev/null 2>&1 <<'PY' &
+import http.server
+import os
+import socketserver
+import sys
+
+port = int(sys.argv[1])
+root = sys.argv[2]
+ready_file = sys.argv[3]
+fail_file = sys.argv[4]
+
+os.chdir(root)
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+
+class TCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+try:
+    with TCPServer(("127.0.0.1", port), Handler) as httpd:
+        with open(ready_file, "w") as f:
+            f.write("ok")
+        httpd.serve_forever()
+except Exception as e:
+    with open(fail_file, "w") as f:
+        f.write(str(e))
+    raise
+PY
+  http_pid=$!
+
+  for _ in {1..50}; do
+    [[ -f "${ready_file}" ]] && break
+    if [[ -f "${fail_file}" ]]; then
+      echo "failed to start local webview server on 127.0.0.1:${webview_port}" >&2
+      cat "${fail_file}" >&2
+      exit 1
+    fi
+    kill -0 "${http_pid}" 2>/dev/null || {
+      echo "local webview server exited before becoming ready" >&2
+      exit 1
+    }
+    sleep 0.1
+  done
+
+  [[ -f "${ready_file}" ]] || {
+    echo "timed out waiting for local webview server on 127.0.0.1:${webview_port}" >&2
+    exit 1
+  }
+fi
+
+"${electron}" \
+  --enable-sandbox \
+  --ozone-platform-hint=auto \
+  --class=Codex \
+  "${app_asar}" \
+  "$@" &
+electron_pid=$!
+wait "${electron_pid}"
+EOF
+    chmod 755 "$wrapper"
+}
+
+write_desktop_entry() {
+    local adapter="$1"
+    local entry
+    local wrapper
+    local name
+    local comment
+    local icon
+    local wmclass
+
+    entry="$(desktop_dest_entry "$adapter")"
+    wrapper="$(desktop_dest_bin "$adapter")"
+    case "$adapter" in
+        codex)
+            name="Codex (Sandboxed)"
+            comment="Codex Desktop with sandboxed Codex CLI app-server"
+            icon="openai-codex-desktop"
+            wmclass="Codex"
+            ;;
+        claude)
+            name="Claude Desktop (Sandboxed)"
+            comment="Claude Desktop with sandboxed agent subprocesses"
+            icon="claude"
+            wmclass="Claude"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    install -d -m 755 "$(dirname "$entry")"
+    cat >"$entry" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$name
+Comment=$comment
+Exec=$wrapper %U
+Icon=$icon
+Categories=Development;IDE;
+Terminal=false
+StartupNotify=true
+StartupWMClass=$wmclass
+EOF
+    chmod 644 "$entry"
+}
+
+desktop_codex_install() {
+    desktop_codex_validate >/dev/null
+    write_codex_wrapper
+    write_desktop_entry codex
+    printf 'installed Codex Desktop adapter (experimental)\n'
+    printf 'wrapper: %s\n' "$(desktop_dest_bin codex)"
+    printf 'desktop entry: %s\n' "$(desktop_dest_entry codex)"
+    printf 'Electron stays host-native; Codex CLI/app-server uses %s\n' "$CODEX_ADAPTER_CLI_PATH"
+}
+
+desktop_claude_supported_layout() {
+    cat <<'EOF'
+supported exact layout:
+  none registered
+EOF
+}
+
+desktop_claude_detect() {
+    cat <<EOF
+adapter: claude
+status: unsupported
+electron: host-native if a future supported Desktop layout is added
+shared local chats: no
+wrapper: $(desktop_dest_bin claude)
+desktop entry: $(desktop_dest_entry claude)
+
+detected problems:
+  no supported Claude Desktop package layout is registered yet
+  no stable launcher contract for CLI path, profile/config dir, or app-server transport is known
+EOF
+}
+
+desktop_claude_validate() {
+    printf 'unsupported Claude Desktop package layout\n\n' >&2
+    desktop_claude_supported_layout >&2
+    printf '\ndetected problems:\n' >&2
+    printf '  no supported Claude Desktop package layout is registered yet\n' >&2
+    printf '  no stable launcher contract for CLI path, profile/config dir, or app-server transport is known\n' >&2
+    return 2
+}
+
+desktop_claude_install() {
+    desktop_claude_validate
+}
+
+desktop_cmd() {
+    local subcmd="${1:-}"
+    local adapter="${2:-}"
+
+    case "$subcmd" in
+        detect|validate|install)
+            ;;
+        ""|-h|--help|help)
+            desktop_usage
+            return 0
+            ;;
+        *)
+            printf 'unknown desktop command: %s\n' "$subcmd" >&2
+            desktop_usage >&2
+            return 2
+            ;;
+    esac
+
+    require_host_runtime_for_desktop
+
+    case "$adapter" in
+        codex|claude)
+            ;;
+        "")
+            printf 'missing desktop adapter\n' >&2
+            desktop_usage >&2
+            return 2
+            ;;
+        *)
+            printf 'unknown desktop adapter: %s\n' "$adapter" >&2
+            printf 'supported adapters: codex, claude\n' >&2
+            return 2
+            ;;
+    esac
+
+    case "$subcmd:$adapter" in
+        detect:codex)
+            desktop_codex_detect
+            ;;
+        validate:codex)
+            desktop_codex_validate
+            ;;
+        install:codex)
+            desktop_codex_install
+            ;;
+        detect:claude)
+            desktop_claude_detect
+            ;;
+        validate:claude)
+            desktop_claude_validate
+            ;;
+        install:claude)
+            desktop_claude_install
+            ;;
+    esac
 }
 
 doctor() {
@@ -588,10 +964,6 @@ case "$cmd" in
         shift
         setup_android_sdk "$@"
         ;;
-    setup-codex-desktop)
-        shift
-        setup_codex_desktop "$@"
-        ;;
     shell)
         shift
         run_container bash "$@"
@@ -602,7 +974,7 @@ case "$cmd" in
         ;;
     desktop)
         shift
-        run_desktop "$@"
+        desktop_cmd "$@"
         ;;
     exec)
         shift
