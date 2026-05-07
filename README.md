@@ -1,18 +1,11 @@
 # Agent Sandbox
 
-A basic Podman sandbox for autonomous CLI agents.
+A basic agent sandboxing I created for personal use, also usable with [Codex Desktop Linux community package](https://github.com/ilysenko/codex-desktop-linux).
 
-Most agent tools include their own sandbox controls, but those controls are
-often broad: deny a few commands, or switch to a whitelist mode and approve
-every little command. Agent Sandbox puts the agent in a small Linux container
-with its own home directory and only the folders you choose to mount.
+Normally workspace read/write + auto-review (or equivalents) are safer, this is for people who want agent to work fully autonomously with full read/write access, while keeping it on a allow list for permissions instead of a deny list. Agent Sandbox puts the agent in a small Linux container (ubuntu for first class playwright integration) with its own home directory and only the folders you choose to mount.
 
-This is not a VM and it does not claim to sandbox every Desktop app. It is a
-simple default boundary for CLI agents.
 
-## Install
-
-Requires `git` and `podman`.
+`git` & `podman` are enough.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/screwys/agent-sandbox/main/scripts/bootstrap.sh | bash
@@ -64,20 +57,52 @@ The config lives under:
 ~/.agent-sandbox/permissions.d/local.env
 ```
 
+## Reusable Local Scripts
+
+For repeatable setup, put your machine-specific permissions in your own private
+repo and install them into `~/.agent-sandbox/permissions.d/`.
+
+Example:
+
+```sh
+mkdir -p ~/.agent-sandbox/permissions.d
+cat > ~/.agent-sandbox/permissions.d/work.env <<'EOF'
+AGENT_EXTRA_MOUNTS="${AGENT_EXTRA_MOUNTS:+$AGENT_EXTRA_MOUNTS:}$HOME/Work/my-app:$HOME/.config/my-tool"
+EOF
+chmod 600 ~/.agent-sandbox/permissions.d/work.env
+```
+
+Or make a private script that writes or copies that file:
+
+```sh
+#!/usr/bin/env sh
+set -eu
+
+install -d -m 700 "$HOME/.agent-sandbox/permissions.d"
+install -m 600 ./agent-sandbox/work.env "$HOME/.agent-sandbox/permissions.d/work.env"
+```
+
+The public repo just reads `*.env` files from that directory. Your local paths,
+service helpers, and private scripts can stay in your dotfiles or work repo.
+
 ## Commands
 
 ```sh
-agent shell                 # interactive sandbox shell
-agent-codex                 # Codex CLI in the sandbox
-agent codex                 # same, through the main command
-agent exec <command>        # run any command in the sandbox
-agent allow <folder>        # mount another folder read/write
-agent config edit           # edit folder access config
-agent doctor                # show basic status
+agent shell                     # interactive sandbox shell
+agent-codex                     # Codex CLI in the sandbox
+agent codex                     # same, through the main command
+agent sandbox off [duration]    # max 240m, or can write --forever
+agent sandbox on
+agent exec <command>            # run any command in the sandbox
+agent allow <folder>            # mount another folder read/write
+agent config edit               # edit folder access config
+agent config open               # open the folder access config directory
+agent doctor                    # show basic status
+
 ```
 
-`agent-codex` is explicit on purpose. The installer does not replace your
-native `/usr/bin/codex` unless you opt in:
+`agent-codex` is explicit on purpose, the installer does not replace your
+native `/usr/bin/codex` unless you explicitly tell it to do:
 
 ```sh
 INSTALL_CODEX_AGENT_SHIM=1 ./scripts/install.sh
@@ -85,7 +110,7 @@ INSTALL_CODEX_AGENT_SHIM=1 ./scripts/install.sh
 
 ## Desktop
 
-Desktop launchers are host-side adapters, not the core sandbox guarantee.
+Codex Desktop itself is not sandboxed, only the codex cli it uses is.
 
 The installer creates `Codex (Sandboxed)` by default when it detects the tested
 Codex Desktop layout from
@@ -103,25 +128,4 @@ It also uses a separate config/profile directory:
 ~/.config/codex-sandboxed
 ```
 
-Native Codex Desktop stays native. Local chats are not shared by default.
-
-Claude Desktop adapter: TODO.
-
-## Disable The Sandbox Temporarily
-
-Use this only from a host terminal:
-
-```sh
-agent sandbox off 240m
-AGENT_SANDBOX=disabled agent shell
-agent sandbox on
-```
-
-Disabled mode mounts your real host home read/write. It is not a security
-boundary.
-
-## Limits
-
-The boundary is the set of mounted folders, the Podman network mode, and any
-host brokers you add. If a folder is mounted read/write, the agent can read,
-edit, or delete files there.
+Native Codex Desktop stays native, local chats are **not shared** (annoying, but sync is also risky).
