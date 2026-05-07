@@ -26,15 +26,19 @@ RUN apt-get update \
         libssl-dev \
         make \
         patch \
+        p7zip-full \
         pkg-config \
         python3 \
         python3-pip \
         python3-venv \
         ripgrep \
         rsync \
+        cargo \
+        rustc \
         sqlite3 \
         unzip \
         yq \
+        zstd \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 

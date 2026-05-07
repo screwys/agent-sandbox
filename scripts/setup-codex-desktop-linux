@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEST="${1:-$HOME/.local/share/codex-desktop-linux}"
+REPO_URL="${CODEX_DESKTOP_LINUX_REPO:-https://github.com/ilysenko/codex-desktop-linux.git}"
+
+if [ -d "$DEST/.git" ]; then
+    git -C "$DEST" pull --ff-only
+else
+    mkdir -p "$(dirname "$DEST")"
+    git clone "$REPO_URL" "$DEST"
+fi
+
+cd "$DEST"
+
+command -v 7z >/dev/null 2>&1 || command -v 7zz >/dev/null 2>&1 || {
+    echo "missing 7z/7zz in the agent image" >&2
+    exit 127
+}
+
+make build-app
+
+echo "codex desktop app built at $DEST/codex-app/start.sh"

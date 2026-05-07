@@ -25,11 +25,16 @@ cd ~/Projects/agent-sandbox
 agent doctor
 ```
 
+This installs `agent`, `agent-codex`, `agent-codex-desktop`, and the
+`Codex (Agent Sandbox)` desktop entry.
+
 ## Use
 
 ```sh
 agent shell
 agent codex
+agent-codex
+agent-codex-desktop
 agent exec rg TODO ~/Projects
 ```
 
@@ -49,9 +54,30 @@ agent codex
 agent-codex
 ```
 
-A sandboxed desktop experience needs a desktop launcher that starts
-`codex-desktop-linux` through this wrapper. Until that exists and is used, the
-vendor desktop app is outside this sandbox.
+For sandboxed desktop work, use:
+
+```sh
+agent-codex-desktop
+```
+
+The installer adds a `Codex (Agent Sandbox)` desktop entry that runs that
+wrapper. It starts the desktop app inside the container and mounts only narrow
+GUI sockets for display/audio. It does not mount the session D-Bus or
+window-manager IPC.
+
+The host `/usr/bin/codex-desktop` app is not reused. The desktop app must exist
+inside the agent home or image.
+
+To build the community Linux desktop app into the agent home:
+
+```sh
+agent setup-codex-desktop
+agent-codex-desktop
+```
+
+That clones [ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux)
+under `~/.agent-sandbox/home/.local/share/codex-desktop-linux` and builds its
+`codex-app/start.sh` launcher inside the sandbox.
 
 ## GitHub Auth
 
@@ -140,6 +166,7 @@ AGENT_STATE_DIR=~/.agent-sandbox
 AGENT_IMAGE=localhost/agent-sandbox:latest
 AGENT_NETWORK=host
 AGENT_EXTRA_MOUNTS=/path/a:/path/b
+AGENT_DESKTOP_COMMAND=/path/or/command
 ```
 
 - `AGENT_PROJECTS_DIR` is the default writable project mount.
@@ -149,6 +176,7 @@ AGENT_EXTRA_MOUNTS=/path/a:/path/b
   Podman network mode if you do not want host-local network access.
 - `AGENT_EXTRA_MOUNTS` adds extra writable paths. Every extra path is fully
   readable, searchable, and editable by the agent.
+- `AGENT_DESKTOP_COMMAND` overrides the command used by `agent desktop`.
 
 In normal modes, extra mounts that contain this launcher repo are skipped. Use a
 host terminal or disabled mode when you want to edit the sandbox itself.
@@ -250,6 +278,7 @@ gives the agent broad access to attached Android devices.
 - use network access according to `AGENT_NETWORK`
 - use `gh` after sandbox-local auth
 - run headless browser work through Playwright
+- run Codex Desktop if the desktop app is installed inside the sandbox
 - use adb if host adb is available
 
 ## What It Cannot Do By Default

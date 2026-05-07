@@ -6,6 +6,7 @@ REPO="${AGENT_REPO:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
 BUILD_IMAGE=0
 SETUP_ANDROID_SDK=0
 INSTALL_CODEX_AGENT_SHIM="${INSTALL_CODEX_AGENT_SHIM:-1}"
+INSTALL_CODEX_DESKTOP_LAUNCHER="${INSTALL_CODEX_DESKTOP_LAUNCHER:-1}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-$HOME/.agent-sandbox}"
 
 usage() {
@@ -21,6 +22,8 @@ environment:
   AGENT_REPO                  repo path (default: parent of this script)
   AGENT_STATE_DIR             state/config dir (default: ~/.agent-sandbox)
   INSTALL_CODEX_AGENT_SHIM    install ~/.local/bin/codex shim (default: 1)
+  INSTALL_CODEX_DESKTOP_LAUNCHER
+                              install sandboxed Codex desktop launcher (default: 1)
 EOF
 }
 
@@ -77,19 +80,31 @@ done
 chmod +x \
     "$REPO/bin/agent" \
     "$REPO/bin/agent-codex" \
+    "$REPO/bin/agent-codex-desktop" \
     "$REPO/bin/codex" \
-    "$REPO/scripts/setup-android-sdk"
+    "$REPO/scripts/setup-android-sdk" \
+    "$REPO/scripts/setup-codex-desktop-linux"
 
 install -d -m 700 "$AGENT_STATE_DIR" "$AGENT_STATE_DIR/permissions.d"
 
 link_file bin/agent "$HOME/.local/bin/agent"
 link_file bin/agent-codex "$HOME/.local/bin/agent-codex"
+link_file bin/agent-codex-desktop "$HOME/.local/bin/agent-codex-desktop"
 
 if truthy "$INSTALL_CODEX_AGENT_SHIM"; then
     link_file bin/codex "$HOME/.local/bin/codex"
     echo "CONFIG: codex shim -> agent codex"
 else
     echo "SKIP: codex PATH shim disabled by INSTALL_CODEX_AGENT_SHIM=$INSTALL_CODEX_AGENT_SHIM"
+fi
+
+if truthy "$INSTALL_CODEX_DESKTOP_LAUNCHER"; then
+    install -Dm0644 \
+        "$REPO/share/applications/agent-codex-desktop.desktop" \
+        "$HOME/.local/share/applications/agent-codex-desktop.desktop"
+    echo "DESKTOP: $HOME/.local/share/applications/agent-codex-desktop.desktop"
+else
+    echo "SKIP: desktop launcher disabled by INSTALL_CODEX_DESKTOP_LAUNCHER=$INSTALL_CODEX_DESKTOP_LAUNCHER"
 fi
 
 if [ "$BUILD_IMAGE" -eq 1 ]; then

@@ -31,6 +31,7 @@ AGENT_SANDBOX="${AGENT_SANDBOX:-strict}"
 HOST_CONTROL_DIR="${AGENT_HOST_CONTROL_DIR:-$STATE_DIR/host-control}"
 SANDBOX_DISABLED_UNTIL_FILE="$HOST_CONTROL_DIR/sandbox-disabled-until"
 SANDBOX_DISABLE_MAX_SECONDS="${AGENT_SANDBOX_DISABLE_MAX_SECONDS:-14400}"
+DESKTOP_RUN=0
 
 usage() {
     cat <<'EOF'
@@ -39,8 +40,10 @@ usage: agent COMMAND [ARG...]
 commands:
   build-image             build the local agent sandbox image
   setup-android-sdk       install Android SDK into the agent home
+  setup-codex-desktop     build codex-desktop-linux into the agent home
   shell                   open an interactive shell
   codex [ARG...]          run Codex CLI inside the sandbox
+  desktop [ARG...]        run Codex Desktop inside the sandbox
   exec COMMAND [ARG...]   run an arbitrary command inside the sandbox
   sandbox off [240m]      allow disabled sandbox mode from a host terminal
   sandbox off --forever
@@ -395,6 +398,46 @@ mount_disabled_filesystems() {
     add_mount_if_exists "$AGENT_HOME" "$AGENT_HOME" "rw"
 }
 
+add_desktop_gui_mounts() {
+    local host_runtime="${XDG_RUNTIME_DIR:-}"
+    local wayland_display="${WAYLAND_DISPLAY:-}"
+    local wayland_socket=""
+    local pipewire_socket=""
+    local pulse_socket=""
+
+    if [ -n "$host_runtime" ] && [ -n "$wayland_display" ]; then
+        wayland_socket="$host_runtime/$wayland_display"
+        if [ -S "$wayland_socket" ]; then
+            PODMAN_ARGS+=(--tmpfs /run/agent-gui:rw,nosuid,nodev,mode=700)
+            PODMAN_ARGS+=(--volume "$wayland_socket:/run/agent-gui/$wayland_display:rw")
+            PODMAN_ARGS+=(--env "XDG_RUNTIME_DIR=/run/agent-gui")
+            PODMAN_ARGS+=(--env "WAYLAND_DISPLAY=$wayland_display")
+
+            pipewire_socket="$host_runtime/pipewire-0"
+            if [ -S "$pipewire_socket" ]; then
+                PODMAN_ARGS+=(--volume "$pipewire_socket:/run/agent-gui/pipewire-0:rw")
+            fi
+
+            pulse_socket="$host_runtime/pulse/native"
+            if [ -S "$pulse_socket" ]; then
+                PODMAN_ARGS+=(--volume "$pulse_socket:/run/agent-gui/pulse-native:rw")
+                PODMAN_ARGS+=(--env "PULSE_SERVER=unix:/run/agent-gui/pulse-native")
+            fi
+        fi
+    fi
+
+    if [ -n "${DISPLAY:-}" ] && [ -d /tmp/.X11-unix ]; then
+        PODMAN_ARGS+=(--env "DISPLAY=$DISPLAY")
+        PODMAN_ARGS+=(--volume /tmp/.X11-unix:/tmp/.X11-unix:rw)
+        if [ -n "${XAUTHORITY:-}" ] && [ -f "$XAUTHORITY" ]; then
+            PODMAN_ARGS+=(--env "XAUTHORITY=$XAUTHORITY")
+            PODMAN_ARGS+=(--volume "$XAUTHORITY:$XAUTHORITY:ro")
+        fi
+    fi
+
+    PODMAN_ARGS+=(--env NO_AT_BRIDGE=1)
+}
+
 workdir_for_container() {
     case "$PWD/" in
         "$PROJECTS_DIR"/*)
@@ -435,6 +478,9 @@ run_container() {
         --env "ADB_SERVER_SOCKET=tcp:127.0.0.1:5037"
         --workdir "$(workdir_for_container)"
     )
+    if [ -n "${AGENT_DESKTOP_COMMAND:-}" ]; then
+        PODMAN_ARGS+=(--env "AGENT_DESKTOP_COMMAND=$AGENT_DESKTOP_COMMAND")
+    fi
     if [ "$AGENT_SANDBOX" != "disabled" ]; then
         PODMAN_ARGS+=(--read-only)
     fi
@@ -454,12 +500,51 @@ run_container() {
         add_extra_mounts
     fi
 
+    if [ "$DESKTOP_RUN" -eq 1 ]; then
+        add_desktop_gui_mounts
+    fi
+
     exec podman "${PODMAN_ARGS[@]}" "$IMAGE" "$@"
 }
 
 setup_android_sdk() {
     ensure_dirs
     "$REPO/scripts/setup-android-sdk" "$AGENT_HOME/Android/Sdk" "$@"
+}
+
+setup_codex_desktop() {
+    run_container "$REPO/scripts/setup-codex-desktop-linux" "$@"
+}
+
+run_desktop() {
+    DESKTOP_RUN=1
+    run_container bash -lc '
+set -euo pipefail
+
+if [ -n "${AGENT_DESKTOP_COMMAND:-}" ]; then
+    exec ${AGENT_DESKTOP_COMMAND} "$@"
+fi
+
+if [ -x "$HOME/.local/share/codex-desktop-linux/codex-app/start.sh" ]; then
+    exec "$HOME/.local/share/codex-desktop-linux/codex-app/start.sh" "$@"
+fi
+
+for candidate in codex-desktop codex-desktop-linux; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        exec "$candidate" "$@"
+    fi
+done
+
+cat >&2 <<EOF
+missing Codex Desktop inside the agent image/home
+
+Run:
+  agent setup-codex-desktop
+
+Or set AGENT_DESKTOP_COMMAND to a command available inside the sandbox.
+EOF
+exit 127
+' agent-desktop "$@"
 }
 
 doctor() {
@@ -503,6 +588,10 @@ case "$cmd" in
         shift
         setup_android_sdk "$@"
         ;;
+    setup-codex-desktop)
+        shift
+        setup_codex_desktop "$@"
+        ;;
     shell)
         shift
         run_container bash "$@"
@@ -510,6 +599,10 @@ case "$cmd" in
     codex)
         shift
         run_container codex "$@"
+        ;;
+    desktop)
+        shift
+        run_desktop "$@"
         ;;
     exec)
         shift
