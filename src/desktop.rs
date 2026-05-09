@@ -256,6 +256,7 @@ export XDG_CACHE_HOME="${{XDG_CACHE_HOME:-{cache_home}}}"
 export BUILD_FLAVOR="${{BUILD_FLAVOR:-prod}}"
 export NODE_ENV="${{NODE_ENV:-production}}"
 export LD_PRELOAD="${{AGENT_CODEX_DESKTOP_LD_PRELOAD-}}"
+export AGENT_CODEX_APP_SERVER_OPEN_AUTH_URL="${{AGENT_CODEX_APP_SERVER_OPEN_AUTH_URL:-1}}"
 export ELECTRON_RENDERER_URL="${{ELECTRON_RENDERER_URL:-http://127.0.0.1:${{webview_port}}/}}"
 export CODEX_WEBVIEW_PORT="${{CODEX_WEBVIEW_PORT:-${{webview_port}}}}"
 

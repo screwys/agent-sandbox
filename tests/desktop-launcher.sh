@@ -66,6 +66,7 @@ grep -Fq "$home/.config/codex-sandboxed" "$wrapper"
 grep -Fq "127.0.0.1" "$wrapper"
 grep -Fq "5176" "$wrapper"
 grep -Fq "$root/usr/lib/electron39/electron" "$wrapper"
+grep -Fq "AGENT_CODEX_APP_SERVER_OPEN_AUTH_URL" "$wrapper"
 grep -q '^Name=Codex (Sandboxed)$' "$desktop"
 grep -q "^Exec=$wrapper %U$" "$desktop"
 

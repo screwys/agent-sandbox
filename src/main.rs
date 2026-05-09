@@ -1,8 +1,10 @@
 use std::fs;
+use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 
+use agent_sandbox::auth_url::AuthUrlScanner;
 use agent_sandbox::config::{AppConfig, canonical_path, command_exists, ensure_base_dirs};
 use agent_sandbox::desktop;
 use agent_sandbox::host_bridge;
@@ -167,12 +169,89 @@ fn run_container(command: CommandKind, config: &AppConfig) -> Result<i32, String
     ensure_image(config)?;
     start_broker(config);
     start_adb_server();
+    let open_codex_auth_urls = should_open_codex_auth_urls(&command);
     let plan = build_plan(command, config)?;
+    if open_codex_auth_urls {
+        return run_container_with_auth_url_tap(&plan);
+    }
     let status = Command::new("podman")
         .args(plan.podman_args())
         .status()
         .map_err(|err| format!("could not run podman: {err}"))?;
     Ok(status.code().unwrap_or(1))
+}
+
+fn should_open_codex_auth_urls(command: &CommandKind) -> bool {
+    if std::env::var("AGENT_CODEX_APP_SERVER_OPEN_AUTH_URL")
+        .map(|value| matches!(value.as_str(), "0" | "false" | "no" | "off" | "never"))
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    matches!(command, CommandKind::Codex(args) if args.first().map(String::as_str) == Some("app-server"))
+}
+
+fn run_container_with_auth_url_tap(plan: &RunPlan) -> Result<i32, String> {
+    let mut child = Command::new("podman")
+        .args(plan.podman_args())
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|err| format!("could not run podman: {err}"))?;
+    let mut child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "could not capture podman stdout".to_string())?;
+    let mut host_stdout = std::io::stdout();
+    let mut scanner = AuthUrlScanner::default();
+    let mut buffer = [0_u8; 8192];
+
+    loop {
+        let read = child_stdout
+            .read(&mut buffer)
+            .map_err(|err| format!("could not read podman stdout: {err}"))?;
+        if read == 0 {
+            break;
+        }
+        host_stdout
+            .write_all(&buffer[..read])
+            .map_err(|err| format!("could not write podman stdout: {err}"))?;
+        host_stdout
+            .flush()
+            .map_err(|err| format!("could not flush podman stdout: {err}"))?;
+        for url in scanner.push(&buffer[..read]) {
+            open_auth_url_on_host(&url);
+        }
+    }
+
+    let status = child.wait().map_err(|err| err.to_string())?;
+    Ok(status.code().unwrap_or(1))
+}
+
+fn open_auth_url_on_host(url: &str) {
+    eprintln!("agent-sandbox: opening Codex sign-in URL on host");
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(err) => {
+            eprintln!("agent-sandbox: could not locate host opener: {err}");
+            return;
+        }
+    };
+    match Command::new(exe)
+        .args(["host", "open-url", url])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        Ok(status) => eprintln!(
+            "agent-sandbox: host opener exited with {}",
+            status.code().unwrap_or(1)
+        ),
+        Err(err) => eprintln!("agent-sandbox: could not run host opener: {err}"),
+    }
 }
 
 fn build_plan(command: CommandKind, config: &AppConfig) -> Result<RunPlan, String> {

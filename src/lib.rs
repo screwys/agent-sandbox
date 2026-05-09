@@ -1,3 +1,4 @@
+pub mod auth_url;
 pub mod config;
 pub mod desktop;
 pub mod host_bridge;
