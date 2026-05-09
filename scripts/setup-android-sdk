@@ -44,7 +44,13 @@ unzip -q "${tmpdir}/cmdline-tools.zip" -d "${tmpdir}/cmdline-tools"
 mv "${tmpdir}/cmdline-tools/cmdline-tools" "${android_home}/cmdline-tools/latest"
 
 sdkmanager="${android_home}/cmdline-tools/latest/bin/sdkmanager"
+set +o pipefail
 yes | "${sdkmanager}" --sdk_root="${android_home}" --licenses
+license_status="$?"
+set -o pipefail
+if [ "${license_status}" -ne 0 ] && [ "${license_status}" -ne 141 ]; then
+    exit "${license_status}"
+fi
 "${sdkmanager}" --sdk_root="${android_home}" \
     "platform-tools" \
     "platforms;android-${android_api}" \
