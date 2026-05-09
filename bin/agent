@@ -32,6 +32,7 @@ CONTAINERFILE="${AGENT_CONTAINERFILE:-$REPO/Containerfile}"
 CONTAINER_CONTEXT="${AGENT_CONTEXT:-$REPO}"
 AGENT_NETWORK="${AGENT_NETWORK:-host}"
 AGENT_SANDBOX="${AGENT_SANDBOX:-strict}"
+AGENT_USERNS="${AGENT_USERNS:-host}"
 HOST_CONTROL_DIR="${AGENT_HOST_CONTROL_DIR:-$STATE_DIR/host-control}"
 SANDBOX_DISABLED_UNTIL_FILE="$HOST_CONTROL_DIR/sandbox-disabled-until"
 SANDBOX_DISABLE_MAX_SECONDS="${AGENT_SANDBOX_DISABLE_MAX_SECONDS:-14400}"
@@ -449,7 +450,7 @@ run_container() {
     PODMAN_ARGS=(
         run
         --rm
-        --userns=keep-id
+        --userns="$AGENT_USERNS"
         --network="$AGENT_NETWORK"
         --security-opt=no-new-privileges
         --security-opt=label=disable
@@ -1083,6 +1084,7 @@ doctor() {
         printf '(missing)\n'
     fi
     printf 'network: %s\n' "$AGENT_NETWORK"
+    printf 'userns: %s\n' "$AGENT_USERNS"
     printf 'sandbox mode: %s\n' "$AGENT_SANDBOX"
     sandbox_lease_summary
     printf 'adb server: '
