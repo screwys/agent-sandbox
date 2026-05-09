@@ -24,6 +24,7 @@ root="$tmp/root"
 mkdir -p \
     "$home/.local/bin" \
     "$root/usr/bin" \
+    "$root/usr/share/icons/hicolor/512x512/apps" \
     "$root/usr/lib/electron39" \
     "$root/usr/lib/openai-codex-desktop/content/webview" \
     "$root/usr/lib/openai-codex-desktop/resources"
@@ -33,6 +34,7 @@ chmod +x "$home/.local/bin/agent-codex"
 
 printf '#!/usr/bin/env bash\nexit 0\n' >"$root/usr/lib/electron39/electron"
 chmod +x "$root/usr/lib/electron39/electron"
+printf 'icon\n' >"$root/usr/share/icons/hicolor/512x512/apps/codex-desktop.png"
 printf 'asar\n' >"$root/usr/lib/openai-codex-desktop/resources/app.asar"
 printf '<!doctype html>\n' >"$root/usr/lib/openai-codex-desktop/content/webview/index.html"
 
@@ -67,13 +69,18 @@ grep -Fq "127.0.0.1" "$wrapper"
 grep -Fq "5176" "$wrapper"
 grep -Fq "$root/usr/lib/electron39/electron" "$wrapper"
 grep -Fq "AGENT_CODEX_APP_SERVER_OPEN_AUTH_URL" "$wrapper"
+grep -Fq -- "--app-id=codex-sandboxed --class=codex-sandboxed" "$wrapper"
+test -f "$home/.local/share/icons/hicolor/512x512/apps/codex-sandboxed.png"
 grep -q '^Name=Codex (Sandboxed)$' "$desktop"
 grep -q "^Exec=$wrapper %U$" "$desktop"
+grep -q '^Icon=codex-sandboxed$' "$desktop"
+grep -q '^StartupWMClass=codex-sandboxed$' "$desktop"
 
 user_home="$tmp/user-home"
 user_appdir="$user_home/.local/opt/codex-desktop-linux/codex-app"
 mkdir -p \
     "$user_home/.local/bin" \
+    "$user_appdir/.codex-linux" \
     "$user_appdir/content/webview" \
     "$user_appdir/resources"
 
@@ -81,6 +88,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$user_home/.local/bin/agent-codex"
 chmod +x "$user_home/.local/bin/agent-codex"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$user_appdir/electron"
 chmod +x "$user_appdir/electron"
+printf 'icon\n' >"$user_appdir/.codex-linux/codex-desktop.png"
 printf 'asar\n' >"$user_appdir/resources/app.asar"
 printf '<!doctype html>\n' >"$user_appdir/content/webview/index.html"
 cat >"$user_appdir/start.sh" <<'EOF'
@@ -112,7 +120,9 @@ grep -Fq 'layout="user-local"' "$user_wrapper"
 grep -Fq "start_sh=\"$user_appdir/start.sh\"" "$user_wrapper"
 grep -Fq "CODEX_WEBVIEW_PORT=" "$user_wrapper"
 grep -Fq "AGENT_CODEX_DESKTOP_LD_PRELOAD-" "$user_wrapper"
+grep -Fq "CODEX_LINUX_APP_ID=codex-sandboxed" "$user_wrapper"
 grep -Fq "CODEX_LINUX_APP_DISPLAY_NAME=CodexSandboxed" "$user_wrapper"
+test -f "$user_home/.local/share/icons/hicolor/512x512/apps/codex-sandboxed.png"
 EXPECTED_APPDIR="$user_appdir" "$user_wrapper" >/dev/null
 EXPECTED_ARGS="$tmp/wayland.args" EXPECTED_APPDIR="$user_appdir" WAYLAND_DISPLAY=wayland-1 "$user_wrapper" >/dev/null
 grep -Fxq -- '--wayland' "$tmp/wayland.args"

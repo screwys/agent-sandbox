@@ -19,7 +19,11 @@ struct CodexPaths {
     state_home: PathBuf,
     cache_home: PathBuf,
     port: String,
+    icon_candidates: Vec<PathBuf>,
 }
+
+const CODEX_SANDBOXED_APP_ID: &str = "codex-sandboxed";
+const CODEX_SANDBOXED_DISPLAY_NAME: &str = "CodexSandboxed";
 
 pub fn desktop_cmd(args: &[String], config: &AppConfig) -> Result<String, String> {
     sandbox_control::require_host_runtime()?;
@@ -85,6 +89,29 @@ fn codex_paths(config: &AppConfig) -> CodexPaths {
         start_sh = user_appdir.join("start.sh");
     }
 
+    let icon_candidates = vec![
+        appdir.join(".codex-linux/codex-desktop.png"),
+        appdir.join("../assets/codex.png"),
+        config
+            .home
+            .join(".local/share/icons/hicolor/512x512/apps/codex-desktop.png"),
+        config
+            .home
+            .join(".local/share/icons/hicolor/256x256/apps/codex-desktop.png"),
+        PathBuf::from(format!(
+            "{root}/usr/share/icons/hicolor/512x512/apps/codex-desktop.png"
+        )),
+        PathBuf::from(format!(
+            "{root}/usr/share/icons/hicolor/256x256/apps/codex-desktop.png"
+        )),
+        PathBuf::from(format!(
+            "{root}/usr/share/icons/hicolor/512x512/apps/openai-codex-desktop.png"
+        )),
+        PathBuf::from(format!(
+            "{root}/usr/share/icons/hicolor/256x256/apps/openai-codex-desktop.png"
+        )),
+    ];
+
     CodexPaths {
         asar: appdir.join("resources/app.asar"),
         webview: appdir.join("content/webview"),
@@ -106,6 +133,7 @@ fn codex_paths(config: &AppConfig) -> CodexPaths {
         electron,
         system_launcher: system_launcher_value,
         start_sh,
+        icon_candidates,
     }
 }
 
@@ -157,6 +185,7 @@ fn codex_install(config: &AppConfig) -> Result<String, String> {
     codex_validate(config)?;
     let paths = codex_paths(config);
     write_codex_wrapper(config, &paths)?;
+    install_codex_icon(config, &paths)?;
     write_desktop_entry(config, "codex")?;
     Ok(format!(
         "installed Codex Desktop adapter (experimental)\nwrapper: {}\ndesktop entry: {}\nElectron stays host-native; Codex CLI/app-server uses {}\n",
@@ -272,8 +301,8 @@ if [[ "${{layout}}" == "user-local" && -x "${{start_sh}}" ]]; then
     printf '#!/usr/bin/env bash\n'
     printf 'rm -f "$0"\n'
     sed \
-      -e 's/^CODEX_LINUX_APP_ID=.*/CODEX_LINUX_APP_ID=Codex/' \
-      -e 's/^CODEX_LINUX_APP_DISPLAY_NAME=.*/CODEX_LINUX_APP_DISPLAY_NAME=CodexSandboxed/' \
+      -e 's/^CODEX_LINUX_APP_ID=.*/CODEX_LINUX_APP_ID={app_id}/' \
+      -e 's/^CODEX_LINUX_APP_DISPLAY_NAME=.*/CODEX_LINUX_APP_DISPLAY_NAME={display_name}/' \
       "${{start_sh}}"
   }} >"${{tmp_start}}"
   chmod +x "${{tmp_start}}"
@@ -332,9 +361,9 @@ if [[ -d "${{webview_dir}}" ]] && find "${{webview_dir}}" -mindepth 1 -maxdepth 
 fi
 
 if [[ "${{layout}}" == "user-local" ]]; then
-  "${{electron}}" --no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox --disable-gpu-compositing --ozone-platform-hint=auto --app-id=Codex --class=Codex "${{app_asar}}" "$@" &
+  "${{electron}}" --no-sandbox --disable-dev-shm-usage --disable-gpu-sandbox --disable-gpu-compositing --ozone-platform-hint=auto --app-id={app_id} --class={app_id} "${{app_asar}}" "$@" &
 else
-  "${{electron}}" --enable-sandbox --ozone-platform-hint=auto --app-id=Codex --class=Codex "${{app_asar}}" "$@" &
+  "${{electron}}" --enable-sandbox --ozone-platform-hint=auto --app-id={app_id} --class={app_id} "${{app_asar}}" "$@" &
 fi
 electron_pid=$!
 wait "${{electron_pid}}"
@@ -350,9 +379,27 @@ wait "${{electron_pid}}"
         config_home = paths.config_home.display(),
         state_home = paths.state_home.display(),
         cache_home = paths.cache_home.display(),
+        app_id = CODEX_SANDBOXED_APP_ID,
+        display_name = CODEX_SANDBOXED_DISPLAY_NAME,
     );
     fs::write(&wrapper, body).map_err(|err| err.to_string())?;
     chmod(&wrapper, 0o755)
+}
+
+fn install_codex_icon(config: &AppConfig, paths: &CodexPaths) -> Result<(), String> {
+    let Some(source) = paths.icon_candidates.iter().find(|path| path.is_file()) else {
+        return Ok(());
+    };
+    let dest = config
+        .home
+        .join(".local/share/icons/hicolor/512x512/apps")
+        .join(format!("{CODEX_SANDBOXED_APP_ID}.png"));
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    fs::copy(source, &dest)
+        .map(|_| ())
+        .map_err(|err| format!("could not install Codex sandboxed icon: {err}"))
 }
 
 pub fn write_desktop_entry(config: &AppConfig, adapter: &str) -> Result<(), String> {
@@ -365,8 +412,8 @@ pub fn write_desktop_entry(config: &AppConfig, adapter: &str) -> Result<(), Stri
         "codex" => (
             "Codex (Sandboxed)",
             "Codex Desktop with sandboxed Codex CLI app-server",
-            "openai-codex-desktop",
-            "Codex",
+            CODEX_SANDBOXED_APP_ID,
+            CODEX_SANDBOXED_APP_ID,
         ),
         "claude" => (
             "Claude Desktop (Sandboxed)",
