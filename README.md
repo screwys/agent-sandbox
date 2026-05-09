@@ -1,6 +1,6 @@
 # Agent Sandbox
 
-A basic agent sandboxing I created for personal use, also usable with [Codex Desktop Linux community package](https://github.com/ilysenko/codex-desktop-linux).
+A basic terminal agent sandboxing I created for personal use, also usable with [Codex Desktop Linux community package](https://github.com/ilysenko/codex-desktop-linux).
 
 Normally workspace read/write + auto-review (or equivalents) are safer, this is for people who want agent to work fully autonomously with full read/write access, while keeping it on a allow list for permissions instead of a deny list. Agent Sandbox puts the agent in a small Linux container (ubuntu for first class playwright integration) with its own home directory and only the folders you choose to mount. Only git & podman are enough, so this works out of the box on a normal Linux system.
 
@@ -34,6 +34,10 @@ agent-codex
 agent exec rg TODO ~/Projects
 ```
 
+Test: tell the agent to write `test.txt` in your home. It will land under
+`~/.agent-sandbox/home/test.txt`, while the sandboxed agent thinks it has
+read/write access to `~/test.txt`.
+
 By default the agent gets:
 
 - its own home at `~/.agent-sandbox/home`
@@ -49,7 +53,7 @@ By default the agent gets:
 ## Give Access To A Folder
 
 ```sh
-agent allow ~/Server/Bunker
+agent allow ~/Server/Igloo
 agent allow ~/Development/my-app
 ```
 
