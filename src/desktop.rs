@@ -24,6 +24,7 @@ struct CodexPaths {
 
 const CODEX_SANDBOXED_APP_ID: &str = "codex-sandboxed";
 const CODEX_SANDBOXED_DISPLAY_NAME: &str = "CodexSandboxed";
+const CODEX_DESKTOP_WINDOW_APP_ID: &str = "codex-desktop";
 
 pub fn desktop_cmd(args: &[String], config: &AppConfig) -> Result<String, String> {
     sandbox_control::require_host_runtime()?;
@@ -413,7 +414,7 @@ pub fn write_desktop_entry(config: &AppConfig, adapter: &str) -> Result<(), Stri
             "Codex (Sandboxed)",
             "Codex Desktop with sandboxed Codex CLI app-server",
             CODEX_SANDBOXED_APP_ID,
-            CODEX_SANDBOXED_APP_ID,
+            CODEX_DESKTOP_WINDOW_APP_ID,
         ),
         "claude" => (
             "Claude Desktop (Sandboxed)",

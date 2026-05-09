@@ -74,7 +74,7 @@ test -f "$home/.local/share/icons/hicolor/512x512/apps/codex-sandboxed.png"
 grep -q '^Name=Codex (Sandboxed)$' "$desktop"
 grep -q "^Exec=$wrapper %U$" "$desktop"
 grep -q '^Icon=codex-sandboxed$' "$desktop"
-grep -q '^StartupWMClass=codex-sandboxed$' "$desktop"
+grep -q '^StartupWMClass=codex-desktop$' "$desktop"
 
 user_home="$tmp/user-home"
 user_appdir="$user_home/.local/opt/codex-desktop-linux/codex-app"
