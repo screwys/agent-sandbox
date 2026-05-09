@@ -107,6 +107,7 @@ test -x "$user_wrapper"
 grep -Fq 'layout="user-local"' "$user_wrapper"
 grep -Fq "start_sh=\"$user_appdir/start.sh\"" "$user_wrapper"
 grep -Fq "CODEX_WEBVIEW_PORT=" "$user_wrapper"
+grep -Fq "AGENT_CODEX_DESKTOP_LD_PRELOAD-" "$user_wrapper"
 grep -Fq "CODEX_LINUX_APP_DISPLAY_NAME=CodexSandboxed" "$user_wrapper"
 EXPECTED_APPDIR="$user_appdir" "$user_wrapper" >/dev/null
 
