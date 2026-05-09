@@ -36,6 +36,9 @@ By default the agent gets:
 - no access to your normal home, browser profile, keyring, session D-Bus, or
   window-manager IPC
 - a read-only container OS during normal runs
+- a narrow host broker for allowlisted `systemctl --user` and `journalctl --user`
+  service commands, so project scripts can restart local dev services without
+  mounting the full user session bus
 
 ## Give Access To A Folder
 
@@ -94,12 +97,17 @@ agent codex                     # same, through the main command
 agent sandbox off [duration]    # max 240m, or can write --forever
 agent sandbox on
 agent exec <command>            # run any command in the sandbox
+agent broker-start              # start the allowlisted host-service broker
 agent allow <folder>            # mount another folder read/write
 agent config edit               # edit folder access config
 agent config open               # open the folder access config directory
 agent doctor                    # show basic status
 
 ```
+
+The host broker is installed as `agent-sandbox-broker.service`. It only accepts
+small allowlisted user-service commands such as restart/status/logs for known
+local dev units.
 
 `agent-codex` is explicit on purpose, the installer does not replace your
 native `/usr/bin/codex` unless you explicitly tell it to do:

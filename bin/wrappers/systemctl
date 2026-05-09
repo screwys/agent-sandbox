@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" != "--user" ]; then
+    echo "agent systemctl wrapper only supports --user" >&2
+    exit 2
+fi
+shift
+
+action="${1:-}"
+[ -n "$action" ] || {
+    echo "usage: systemctl --user ACTION [UNIT]" >&2
+    exit 2
+}
+shift
+
+case "$action" in
+    daemon-reload)
+        [ $# -eq 0 ] || {
+            echo "usage: systemctl --user daemon-reload" >&2
+            exit 2
+        }
+        exec agent-host service daemon-reload
+        ;;
+    start|stop|restart)
+        [ $# -eq 1 ] || {
+            echo "usage: systemctl --user $action UNIT" >&2
+            exit 2
+        }
+        exec agent-host service "$action" "$1"
+        ;;
+    is-active|is-failed)
+        quiet=0
+        if [ "${1:-}" = "--quiet" ]; then
+            quiet=1
+            shift
+        fi
+        [ $# -eq 1 ] || {
+            echo "usage: systemctl --user $action [--quiet] UNIT" >&2
+            exit 2
+        }
+        if [ "$quiet" -eq 1 ]; then
+            exec agent-host service "$action" "$1" >/dev/null 2>&1
+        fi
+        exec agent-host service "$action" "$1"
+        ;;
+    status)
+        unit=""
+        for arg in "$@"; do
+            case "$arg" in
+                --no-pager|--full)
+                    ;;
+                -*)
+                    echo "unsupported systemctl status argument: $arg" >&2
+                    exit 2
+                    ;;
+                *)
+                    unit="$arg"
+                    ;;
+            esac
+        done
+        [ -n "$unit" ] || {
+            echo "usage: systemctl --user status UNIT [--no-pager]" >&2
+            exit 2
+        }
+        exec agent-host service status "$unit"
+        ;;
+    *)
+        echo "systemctl action is not allowed in agent container: $action" >&2
+        exit 2
+        ;;
+esac

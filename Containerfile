@@ -20,6 +20,7 @@ RUN apt-get update \
         gh \
         git \
         golang-go \
+        iproute2 \
         openjdk-21-jdk-headless \
         jq \
         less \
@@ -44,6 +45,11 @@ RUN apt-get update \
 
 RUN npm install -g @openai/codex pnpm "playwright@${PLAYWRIGHT_VERSION}" \
     && rm -rf /root/.npm
+
+COPY bin/agent-host /usr/local/bin/agent-host
+COPY bin/wrappers/systemctl /usr/local/bin/systemctl
+COPY bin/wrappers/journalctl /usr/local/bin/journalctl
+RUN chmod 0755 /usr/local/bin/agent-host /usr/local/bin/systemctl /usr/local/bin/journalctl
 
 ENV PATH="/usr/local/bin:/usr/bin:/bin"
 ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"

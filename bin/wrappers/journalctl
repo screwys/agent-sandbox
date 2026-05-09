@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" != "--user" ]; then
+    echo "agent journalctl wrapper only supports --user" >&2
+    exit 2
+fi
+shift
+
+unit=""
+lines="120"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -u)
+            [ $# -ge 2 ] || {
+                echo "usage: journalctl --user -u UNIT [-n LINES] [--no-pager]" >&2
+                exit 2
+            }
+            unit="$2"
+            shift 2
+            ;;
+        -n)
+            [ $# -ge 2 ] || {
+                echo "usage: journalctl --user -u UNIT [-n LINES] [--no-pager]" >&2
+                exit 2
+            }
+            lines="$2"
+            shift 2
+            ;;
+        --no-pager|--full)
+            shift
+            ;;
+        *)
+            echo "unsupported journalctl argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+[ -n "$unit" ] || {
+    echo "usage: journalctl --user -u UNIT [-n LINES] [--no-pager]" >&2
+    exit 2
+}
+
+exec agent-host service logs "$unit" -n "$lines"

@@ -1,0 +1,12 @@
+[Unit]
+Description=agent sandbox host broker
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/agent-broker serve
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=default.target

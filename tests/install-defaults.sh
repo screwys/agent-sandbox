@@ -18,6 +18,14 @@ cat >"$tmp/bin/podman" <<'EOF'
 printf '%s\n' "$*" >>"$PODMAN_LOG"
 EOF
 chmod +x "$tmp/bin/podman"
+cat >"$tmp/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"
+EOF
+chmod +x "$tmp/bin/systemctl"
+export PODMAN_LOG="$tmp/podman.log"
+export SYSTEMCTL_LOG="$tmp/systemctl.log"
+export PATH="$tmp/bin:$PATH"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/root/usr/lib/electron39/electron"
 chmod +x "$tmp/root/usr/lib/electron39/electron"
 printf 'asar\n' >"$tmp/root/usr/lib/openai-codex-desktop/resources/app.asar"
@@ -37,19 +45,24 @@ cat >"$tmp/home/.local/share/applications/agent-codex-desktop.desktop" <<'EOF'
 Exec=agent-codex-desktop %U
 EOF
 
-HOME="$tmp/home" AGENT_STATE_DIR="$tmp/state" AGENT_DESKTOP_ROOT="$tmp/root" PODMAN_LOG="$tmp/podman.log" PATH="$tmp/bin:$PATH" \
+HOME="$tmp/home" AGENT_STATE_DIR="$tmp/state" AGENT_DESKTOP_ROOT="$tmp/root" \
     "$REPO/scripts/install.sh" >/dev/null
 
 test -L "$tmp/home/.local/bin/agent"
+test -L "$tmp/home/.local/bin/agent-broker"
 test -L "$tmp/home/.local/bin/agent-codex"
+test -L "$tmp/home/.local/bin/agent-host"
 test ! -e "$tmp/home/.local/bin/codex"
 test ! -L "$tmp/home/.local/bin/agent-codex-desktop"
 test ! -e "$tmp/home/.local/bin/agent-codex-desktop"
 test -x "$tmp/home/.local/bin/codex-desktop-sandboxed"
 test ! -e "$tmp/home/.local/share/applications/agent-codex-desktop.desktop"
 test -f "$tmp/home/.local/share/applications/codex-sandboxed.desktop"
+test -L "$tmp/home/.config/systemd/user/agent-sandbox-broker.service"
 grep -q '^build ' "$tmp/podman.log"
 grep -Fq -- "-f $REPO/Containerfile $REPO" "$tmp/podman.log"
+grep -Fxq -- "--user daemon-reload" "$tmp/systemctl.log"
+grep -Fxq -- "--user enable --now agent-sandbox-broker.service" "$tmp/systemctl.log"
 if grep -Fq "$tmp/home/.local/Containerfile" "$tmp/podman.log"; then
     cat "$tmp/podman.log" >&2
     exit 1

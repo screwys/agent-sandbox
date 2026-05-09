@@ -7,6 +7,7 @@ BUILD_IMAGE=1
 SETUP_ANDROID_SDK=0
 INSTALL_CODEX_AGENT_SHIM="${INSTALL_CODEX_AGENT_SHIM:-0}"
 INSTALL_CODEX_DESKTOP_LAUNCHER="${INSTALL_CODEX_DESKTOP_LAUNCHER:-auto}"
+INSTALL_AGENT_HOST_BRIDGE="${INSTALL_AGENT_HOST_BRIDGE:-1}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-$HOME/.agent-sandbox}"
 
 usage() {
@@ -24,6 +25,7 @@ environment:
   INSTALL_CODEX_AGENT_SHIM    install ~/.local/bin/codex shim (default: 0)
   INSTALL_CODEX_DESKTOP_LAUNCHER
                               auto, 1, or 0 (default: auto)
+  INSTALL_AGENT_HOST_BRIDGE   install and start host broker (default: 1)
 EOF
 }
 
@@ -112,15 +114,21 @@ done
 
 chmod +x \
     "$REPO/bin/agent" \
+    "$REPO/bin/agent-broker" \
     "$REPO/bin/agent-codex" \
+    "$REPO/bin/agent-host" \
     "$REPO/bin/codex" \
+    "$REPO/bin/wrappers/journalctl" \
+    "$REPO/bin/wrappers/systemctl" \
     "$REPO/scripts/bootstrap.sh" \
     "$REPO/scripts/setup-android-sdk"
 
 install -d -m 700 "$AGENT_STATE_DIR" "$AGENT_STATE_DIR/permissions.d"
 
 link_file bin/agent "$HOME/.local/bin/agent"
+link_file bin/agent-broker "$HOME/.local/bin/agent-broker"
 link_file bin/agent-codex "$HOME/.local/bin/agent-codex"
+link_file bin/agent-host "$HOME/.local/bin/agent-host"
 
 if truthy "$INSTALL_CODEX_AGENT_SHIM"; then
     link_file bin/codex "$HOME/.local/bin/codex"
@@ -132,6 +140,19 @@ fi
 
 remove_owned_symlink "$HOME/.local/bin/agent-codex-desktop" "$REPO/bin/agent-codex-desktop"
 remove_owned_desktop_entry "$HOME/.local/share/applications/agent-codex-desktop.desktop"
+
+link_file systemd/agent-sandbox-broker.service "$HOME/.config/systemd/user/agent-sandbox-broker.service"
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    if truthy "$INSTALL_AGENT_HOST_BRIDGE"; then
+        systemctl --user enable --now agent-sandbox-broker.service >/dev/null 2>&1 ||
+            echo "WARN: could not enable agent-sandbox-broker.service"
+    else
+        echo "SKIP: host broker disabled by INSTALL_AGENT_HOST_BRIDGE=$INSTALL_AGENT_HOST_BRIDGE"
+    fi
+else
+    echo "WARN: systemctl not found; host broker service was linked but not enabled"
+fi
 
 if [ "$BUILD_IMAGE" -eq 1 ]; then
     "$HOME/.local/bin/agent" build-image
