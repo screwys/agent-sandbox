@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_URL="${AGENT_SANDBOX_REPO:-https://github.com/screwys/agent-sandbox.git}"
-DEST="${AGENT_SANDBOX_DIR:-$HOME/Projects/agent-sandbox}"
+DEST="${AGENT_SANDBOX_DIR:-$HOME/.local/share/agent-sandbox/repo}"
 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || {

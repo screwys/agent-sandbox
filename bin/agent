@@ -45,6 +45,7 @@ usage: agent COMMAND [ARG...]
 
 commands:
   build-image             build the local agent sandbox image
+  self-update             update the installed checkout if it can fast-forward
   setup-android-sdk       install Android SDK into the agent home
   broker-start            start the host-side user broker
   shell                   open an interactive shell
@@ -321,6 +322,74 @@ EOF
 build_image() {
     need_cmd podman
     podman build -t "$IMAGE" -f "$CONTAINERFILE" "$CONTAINER_CONTEXT"
+}
+
+self_update() {
+    local quiet=0
+    local before
+    local after
+    local upstream
+    local changed_files
+    local -a pull_args=(pull --ff-only)
+
+    case "${1:-}" in
+        --quiet)
+            quiet=1
+            shift
+            ;;
+    esac
+
+    [ "$#" -eq 0 ] || {
+        printf 'usage: agent self-update [--quiet]\n' >&2
+        return 2
+    }
+
+    require_host_runtime_for_desktop
+    need_cmd git
+
+    if [ ! -d "$REPO/.git" ]; then
+        [ "$quiet" -eq 1 ] || printf 'self-update skipped: not a git checkout: %s\n' "$REPO"
+        return 0
+    fi
+
+    if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=normal)" ]; then
+        [ "$quiet" -eq 1 ] || printf 'self-update skipped: checkout has local changes: %s\n' "$REPO"
+        return 0
+    fi
+
+    if ! upstream="$(git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"; then
+        [ "$quiet" -eq 1 ] || printf 'self-update skipped: no upstream branch configured: %s\n' "$REPO"
+        return 0
+    fi
+
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    [ "$quiet" -eq 1 ] && pull_args+=(--quiet)
+    if ! git -C "$REPO" "${pull_args[@]}"; then
+        printf 'self-update failed: could not fast-forward from %s\n' "$upstream" >&2
+        return 1
+    fi
+    after="$(git -C "$REPO" rev-parse HEAD)"
+
+    if [ "$before" = "$after" ]; then
+        [ "$quiet" -eq 1 ] || printf 'self-update: already up to date\n'
+        return 0
+    fi
+
+    [ "$quiet" -eq 1 ] || printf 'self-update: updated %s..%s\n' "${before:0:12}" "${after:0:12}"
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+    fi
+
+    changed_files="$(git -C "$REPO" diff --name-only "$before" "$after" -- || true)"
+    if printf '%s\n' "$changed_files" |
+        grep -Eq '^(Containerfile|bin/agent-host|bin/wrappers/systemctl|bin/wrappers/journalctl)$'; then
+        if command -v podman >/dev/null 2>&1; then
+            build_image || printf 'WARN: self-update could not rebuild the sandbox image\n' >&2
+        else
+            printf 'WARN: self-update changed image files, but podman is missing\n' >&2
+        fi
+    fi
 }
 
 image_exists() {
@@ -1189,6 +1258,10 @@ cmd="${1:-}"
 case "$cmd" in
     build-image)
         build_image
+        ;;
+    self-update)
+        shift
+        self_update "$@"
         ;;
     setup-android-sdk)
         shift

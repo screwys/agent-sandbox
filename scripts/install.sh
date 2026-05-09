@@ -8,6 +8,7 @@ SETUP_ANDROID_SDK=0
 INSTALL_CODEX_AGENT_SHIM="${INSTALL_CODEX_AGENT_SHIM:-0}"
 INSTALL_CODEX_DESKTOP_LAUNCHER="${INSTALL_CODEX_DESKTOP_LAUNCHER:-auto}"
 INSTALL_AGENT_HOST_BRIDGE="${INSTALL_AGENT_HOST_BRIDGE:-1}"
+INSTALL_AGENT_AUTO_UPDATE="${INSTALL_AGENT_AUTO_UPDATE:-1}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-$HOME/.agent-sandbox}"
 
 usage() {
@@ -26,6 +27,7 @@ environment:
   INSTALL_CODEX_DESKTOP_LAUNCHER
                               auto, 1, or 0 (default: auto)
   INSTALL_AGENT_HOST_BRIDGE   install and start host broker (default: 1)
+  INSTALL_AGENT_AUTO_UPDATE   install and start daily update timer (default: 1)
 EOF
 }
 
@@ -142,6 +144,8 @@ remove_owned_symlink "$HOME/.local/bin/agent-codex-desktop" "$REPO/bin/agent-cod
 remove_owned_desktop_entry "$HOME/.local/share/applications/agent-codex-desktop.desktop"
 
 link_file systemd/agent-sandbox-broker.service "$HOME/.config/systemd/user/agent-sandbox-broker.service"
+link_file systemd/agent-sandbox-update.service "$HOME/.config/systemd/user/agent-sandbox-update.service"
+link_file systemd/agent-sandbox-update.timer "$HOME/.config/systemd/user/agent-sandbox-update.timer"
 if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload >/dev/null 2>&1 || true
     if truthy "$INSTALL_AGENT_HOST_BRIDGE"; then
@@ -150,8 +154,15 @@ if command -v systemctl >/dev/null 2>&1; then
     else
         echo "SKIP: host broker disabled by INSTALL_AGENT_HOST_BRIDGE=$INSTALL_AGENT_HOST_BRIDGE"
     fi
+    if truthy "$INSTALL_AGENT_AUTO_UPDATE"; then
+        systemctl --user enable --now agent-sandbox-update.timer >/dev/null 2>&1 ||
+            echo "WARN: could not enable agent-sandbox-update.timer"
+    else
+        systemctl --user disable --now agent-sandbox-update.timer >/dev/null 2>&1 || true
+        echo "SKIP: auto-update disabled by INSTALL_AGENT_AUTO_UPDATE=$INSTALL_AGENT_AUTO_UPDATE"
+    fi
 else
-    echo "WARN: systemctl not found; host broker service was linked but not enabled"
+    echo "WARN: systemctl not found; host broker service and update timer were linked but not enabled"
 fi
 
 if [ "$BUILD_IMAGE" -eq 1 ]; then

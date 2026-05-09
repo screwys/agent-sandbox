@@ -1,0 +1,11 @@
+[Unit]
+Description=daily agent sandbox update check
+
+[Timer]
+OnBootSec=15m
+OnUnitActiveSec=1d
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

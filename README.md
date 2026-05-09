@@ -2,24 +2,29 @@
 
 A basic agent sandboxing I created for personal use, also usable with [Codex Desktop Linux community package](https://github.com/ilysenko/codex-desktop-linux).
 
-Normally workspace read/write + auto-review (or equivalents) are safer, this is for people who want agent to work fully autonomously with full read/write access, while keeping it on a allow list for permissions instead of a deny list. Agent Sandbox puts the agent in a small Linux container (ubuntu for first class playwright integration) with its own home directory and only the folders you choose to mount.
+Normally workspace read/write + auto-review (or equivalents) are safer, this is for people who want agent to work fully autonomously with full read/write access, while keeping it on a allow list for permissions instead of a deny list. Agent Sandbox puts the agent in a small Linux container (ubuntu for first class playwright integration) with its own home directory and only the folders you choose to mount. Only git & podman are enough, so this works out of the box on a normal Linux system.
 
 
-`git` & `podman` are enough.
+To install, you can use the one-liner below:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/screwys/agent-sandbox/main/scripts/bootstrap.sh | bash
 ```
 
-That clones the repo to `~/Projects/agent-sandbox`, installs `agent` and
-`agent-codex`, builds the Podman image, and creates `Codex (Sandboxed)` if a
-supported Codex Desktop install is detected.
+That clones the repo to `~/.local/share/agent-sandbox/repo`, installs `agent`
+and `agent-codex`, builds the Podman image, starts a daily background
+fast-forward update check, and creates a .desktop file `Codex (Sandboxed)` in
+case the mentioned app is installed.
 
 Local install from a clone:
 
 ```sh
 ./scripts/install.sh
 ```
+
+The daily update check is intentionally quiet: it only fast-forwards a clean
+install checkout. Local changes or a non-fast-forward update are skipped. Set
+`INSTALL_AGENT_AUTO_UPDATE=0` during install if you do not want the timer.
 
 ## Use
 
@@ -33,6 +38,7 @@ By default the agent gets:
 
 - its own home at `~/.agent-sandbox/home`
 - read/write access to `~/Projects`
+- installed launcher code outside `~/Projects`
 - no access to your normal home, browser profile, keyring, session D-Bus, or
   window-manager IPC
 - a read-only container OS during normal runs
@@ -97,6 +103,7 @@ agent codex                     # same, through the main command
 agent sandbox off [duration]    # max 240m, or can write --forever
 agent sandbox on
 agent exec <command>            # run any command in the sandbox
+agent self-update               # fast-forward the installed checkout
 agent broker-start              # start the allowlisted host-service broker
 agent allow <folder>            # mount another folder read/write
 agent config edit               # edit folder access config

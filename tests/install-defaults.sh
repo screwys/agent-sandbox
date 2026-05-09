@@ -59,10 +59,13 @@ test -x "$tmp/home/.local/bin/codex-desktop-sandboxed"
 test ! -e "$tmp/home/.local/share/applications/agent-codex-desktop.desktop"
 test -f "$tmp/home/.local/share/applications/codex-sandboxed.desktop"
 test -L "$tmp/home/.config/systemd/user/agent-sandbox-broker.service"
+test -L "$tmp/home/.config/systemd/user/agent-sandbox-update.service"
+test -L "$tmp/home/.config/systemd/user/agent-sandbox-update.timer"
 grep -q '^build ' "$tmp/podman.log"
 grep -Fq -- "-f $REPO/Containerfile $REPO" "$tmp/podman.log"
 grep -Fxq -- "--user daemon-reload" "$tmp/systemctl.log"
 grep -Fxq -- "--user enable --now agent-sandbox-broker.service" "$tmp/systemctl.log"
+grep -Fxq -- "--user enable --now agent-sandbox-update.timer" "$tmp/systemctl.log"
 if grep -Fq "$tmp/home/.local/Containerfile" "$tmp/podman.log"; then
     cat "$tmp/podman.log" >&2
     exit 1
