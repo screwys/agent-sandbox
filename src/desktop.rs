@@ -24,6 +24,7 @@ struct CodexPaths {
 
 const CODEX_SANDBOXED_APP_ID: &str = "codex-sandboxed";
 const CODEX_SANDBOXED_DISPLAY_NAME: &str = "CodexSandboxed";
+const CODEX_SANDBOXED_WINDOW_NAME: &str = "Codex (Sandboxed)";
 const CODEX_DESKTOP_WINDOW_APP_ID: &str = "codex-desktop";
 
 pub fn desktop_cmd(args: &[String], config: &AppConfig) -> Result<String, String> {
@@ -296,6 +297,33 @@ export CODEX_WEBVIEW_PORT="${{CODEX_WEBVIEW_PORT:-${{webview_port}}}}"
 
 mkdir -p "${{XDG_CONFIG_HOME}}" "${{XDG_STATE_HOME}}" "${{XDG_CACHE_HOME}}"
 
+export AGENT_CODEX_DESKTOP_APP_NAME="${{AGENT_CODEX_DESKTOP_APP_NAME:-{window_name}}}"
+name_shim_dir="${{XDG_STATE_HOME}}/agent-sandbox"
+name_shim="${{name_shim_dir}}/codex-desktop-name-shim.js"
+mkdir -p "${{name_shim_dir}}"
+cat >"${{name_shim}}" <<'JS'
+const Module = require("module");
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {{
+  const exports = originalLoad.apply(this, arguments);
+  if (request === "electron" && exports && exports.app && !exports.app.__agentSandboxNameShim) {{
+    const desired = process.env.AGENT_CODEX_DESKTOP_APP_NAME;
+    if (desired && typeof exports.app.setName === "function") {{
+      const originalSetName = exports.app.setName.bind(exports.app);
+      exports.app.setName = function(_name) {{
+        return originalSetName(desired);
+      }};
+      exports.app.__agentSandboxNameShim = true;
+    }}
+  }}
+  return exports;
+}};
+JS
+case " ${{NODE_OPTIONS:-}} " in
+  *" --require=${{name_shim}} "*) ;;
+  *) export NODE_OPTIONS="--require=${{name_shim}}${{NODE_OPTIONS:+ ${{NODE_OPTIONS}}}}" ;;
+esac
+
 if [[ "${{layout}}" == "user-local" && -x "${{start_sh}}" ]]; then
   tmp_start="$(mktemp "${{appdir%/}}/.agent-sandbox-start.XXXXXX")"
   {{
@@ -382,6 +410,7 @@ wait "${{electron_pid}}"
         cache_home = paths.cache_home.display(),
         app_id = CODEX_SANDBOXED_APP_ID,
         display_name = CODEX_SANDBOXED_DISPLAY_NAME,
+        window_name = CODEX_SANDBOXED_WINDOW_NAME,
     );
     fs::write(&wrapper, body).map_err(|err| err.to_string())?;
     chmod(&wrapper, 0o755)
@@ -411,7 +440,7 @@ pub fn write_desktop_entry(config: &AppConfig, adapter: &str) -> Result<(), Stri
     let wrapper = desktop_dest_bin(config, adapter);
     let (name, comment, icon, wmclass) = match adapter {
         "codex" => (
-            "Codex (Sandboxed)",
+            CODEX_SANDBOXED_WINDOW_NAME,
             "Codex Desktop with sandboxed Codex CLI app-server",
             CODEX_SANDBOXED_APP_ID,
             CODEX_DESKTOP_WINDOW_APP_ID,
