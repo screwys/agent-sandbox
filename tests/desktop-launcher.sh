@@ -48,6 +48,7 @@ chmod +x "$root/usr/bin/codex-desktop"
 detect="$(HOME="$home" AGENT_REPO="$REPO" AGENT_DESKTOP_ROOT="$root" "$REPO/bin/agent" desktop detect codex)"
 assert_contains "$detect" "adapter: codex"
 assert_contains "$detect" "status: experimental"
+assert_contains "$detect" "layout: system"
 assert_contains "$detect" "electron: $root/usr/lib/electron39/electron"
 assert_contains "$detect" "webview port: 5176"
 assert_contains "$detect" "electron: host-native"
@@ -68,6 +69,69 @@ grep -Fq "$root/usr/lib/electron39/electron" "$wrapper"
 grep -q '^Name=Codex (Sandboxed)$' "$desktop"
 grep -q "^Exec=$wrapper %U$" "$desktop"
 
+user_home="$tmp/user-home"
+user_appdir="$user_home/.local/opt/codex-desktop-linux/codex-app"
+mkdir -p \
+    "$user_home/.local/bin" \
+    "$user_appdir/content/webview" \
+    "$user_appdir/resources"
+
+printf '#!/usr/bin/env bash\nexit 0\n' >"$user_home/.local/bin/agent-codex"
+chmod +x "$user_home/.local/bin/agent-codex"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$user_appdir/electron"
+chmod +x "$user_appdir/electron"
+printf 'asar\n' >"$user_appdir/resources/app.asar"
+printf '<!doctype html>\n' >"$user_appdir/content/webview/index.html"
+cat >"$user_appdir/start.sh" <<'EOF'
+#!/usr/bin/env bash
+CODEX_LINUX_APP_ID=Codex
+CODEX_LINUX_APP_DISPLAY_NAME=Codex
+exec "$CODEX_CLI_PATH" --version
+EOF
+chmod +x "$user_appdir/start.sh"
+
+detect_user="$(HOME="$user_home" AGENT_REPO="$REPO" "$REPO/bin/agent" desktop detect codex)"
+assert_contains "$detect_user" "status: experimental"
+assert_contains "$detect_user" "layout: user-local"
+assert_contains "$detect_user" "electron: $user_appdir/electron"
+
+HOME="$user_home" AGENT_REPO="$REPO" "$REPO/bin/agent" desktop validate codex >/dev/null
+HOME="$user_home" AGENT_REPO="$REPO" "$REPO/bin/agent" desktop install codex >/dev/null
+user_wrapper="$user_home/.local/bin/codex-desktop-sandboxed"
+test -x "$user_wrapper"
+grep -Fq 'layout="user-local"' "$user_wrapper"
+grep -Fq "start_sh=\"$user_appdir/start.sh\"" "$user_wrapper"
+grep -Fq "CODEX_WEBVIEW_PORT=" "$user_wrapper"
+grep -Fq "CODEX_LINUX_APP_DISPLAY_NAME=CodexSandboxed" "$user_wrapper"
+
+custom_home="$tmp/custom-home"
+custom_appdir="$tmp/custom-codex"
+mkdir -p \
+    "$custom_home/.local/bin" \
+    "$custom_appdir/content/webview" \
+    "$custom_appdir/resources"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$custom_home/.local/bin/agent-codex"
+chmod +x "$custom_home/.local/bin/agent-codex"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$custom_appdir/electron"
+chmod +x "$custom_appdir/electron"
+printf 'asar\n' >"$custom_appdir/resources/app.asar"
+printf '<!doctype html>\n' >"$custom_appdir/content/webview/index.html"
+
+HOME="$custom_home" \
+AGENT_REPO="$REPO" \
+AGENT_CODEX_DESKTOP_APPDIR="$custom_appdir" \
+AGENT_CODEX_DESKTOP_ELECTRON="$custom_appdir/electron" \
+    "$REPO/bin/agent" desktop validate codex >/dev/null
+
+HOME="$custom_home" \
+AGENT_REPO="$REPO" \
+AGENT_CODEX_DESKTOP_APPDIR="$custom_appdir" \
+AGENT_CODEX_DESKTOP_ELECTRON="$custom_appdir/electron" \
+    "$REPO/bin/agent" desktop install codex >/dev/null
+custom_wrapper="$custom_home/.local/bin/codex-desktop-sandboxed"
+grep -Fq "appdir=\"$custom_appdir\"" "$custom_wrapper"
+grep -Fq "electron=\"$custom_appdir/electron\"" "$custom_wrapper"
+
 bad_root="$tmp/bad-root"
 mkdir -p "$bad_root"
 if HOME="$home" AGENT_REPO="$REPO" AGENT_DESKTOP_ROOT="$bad_root" "$REPO/bin/agent" desktop validate codex >"$tmp/bad.out" 2>&1; then
@@ -76,7 +140,7 @@ if HOME="$home" AGENT_REPO="$REPO" AGENT_DESKTOP_ROOT="$bad_root" "$REPO/bin/age
     exit 1
 fi
 assert_contains "$(cat "$tmp/bad.out")" "unsupported Codex Desktop package layout"
-assert_contains "$(cat "$tmp/bad.out")" "supported exact layout"
+assert_contains "$(cat "$tmp/bad.out")" "supported layouts"
 
 if HOME="$home" AGENT_REPO="$REPO" "$REPO/bin/agent" desktop install claude >"$tmp/claude.out" 2>&1; then
     cat "$tmp/claude.out" >&2

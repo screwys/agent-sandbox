@@ -120,7 +120,7 @@ INSTALL_CODEX_AGENT_SHIM=1 ./scripts/install.sh
 
 Codex Desktop itself is not sandboxed, only the codex cli it uses is.
 
-The installer creates `Codex (Sandboxed)` by default when it detects the tested
+The installer creates `Codex (Sandboxed)` by default when it detects a known
 Codex Desktop layout from
 [ilysenko/codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux).
 That launcher runs host-native Electron, but points Codex's CLI/app-server
@@ -137,3 +137,13 @@ It also uses a separate config/profile directory:
 ```
 
 Native Codex Desktop stays native, local chats are **not shared** (annoying, but sync is also risky).
+
+Known layouts:
+
+- system package: `/usr/lib/openai-codex-desktop` plus `/usr/bin/codex-desktop`
+- user-local install: `~/.local/opt/codex-desktop-linux/codex-app`
+
+If your distro packages it somewhere else, set `AGENT_CODEX_DESKTOP_APPDIR` and
+`AGENT_CODEX_DESKTOP_ELECTRON` before running `agent desktop install codex`.
+`AGENT_CODEX_DESKTOP_SYSTEM_LAUNCHER` is only reported for diagnostics; the
+sandboxed wrapper launches Electron directly.

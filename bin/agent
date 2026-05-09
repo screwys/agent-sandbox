@@ -552,26 +552,50 @@ desktop_dest_entry() {
 }
 
 desktop_set_codex_paths() {
-    CODEX_ADAPTER_ELECTRON="$(desktop_host_path /usr/lib/electron39/electron)"
-    CODEX_ADAPTER_APPDIR="$(desktop_host_path /usr/lib/openai-codex-desktop)"
+    local user_appdir="${AGENT_CODEX_DESKTOP_USER_APPDIR:-$HOME/.local/opt/codex-desktop-linux/codex-app}"
+    local system_appdir
+    local system_launcher
+
+    system_appdir="$(desktop_host_path /usr/lib/openai-codex-desktop)"
+    system_launcher="$(desktop_host_path /usr/bin/codex-desktop)"
+
+    CODEX_ADAPTER_LAYOUT="${AGENT_CODEX_DESKTOP_LAYOUT:-system}"
+    CODEX_ADAPTER_APPDIR="${AGENT_CODEX_DESKTOP_APPDIR:-$system_appdir}"
+    CODEX_ADAPTER_ELECTRON="${AGENT_CODEX_DESKTOP_ELECTRON:-$(desktop_host_path /usr/lib/electron39/electron)}"
+    CODEX_ADAPTER_SYSTEM_LAUNCHER="${AGENT_CODEX_DESKTOP_SYSTEM_LAUNCHER:-$system_launcher}"
+    CODEX_ADAPTER_START_SH=""
+
+    if [ -z "${AGENT_CODEX_DESKTOP_APPDIR:-}" ] &&
+        [ -f "$user_appdir/resources/app.asar" ]; then
+        CODEX_ADAPTER_LAYOUT="user-local"
+        CODEX_ADAPTER_APPDIR="$user_appdir"
+        CODEX_ADAPTER_ELECTRON="${AGENT_CODEX_DESKTOP_ELECTRON:-$user_appdir/electron}"
+        CODEX_ADAPTER_SYSTEM_LAUNCHER="${AGENT_CODEX_DESKTOP_SYSTEM_LAUNCHER:-$user_appdir/start.sh}"
+        CODEX_ADAPTER_START_SH="$user_appdir/start.sh"
+    fi
+
     CODEX_ADAPTER_ASAR="$CODEX_ADAPTER_APPDIR/resources/app.asar"
     CODEX_ADAPTER_WEBVIEW="$CODEX_ADAPTER_APPDIR/content/webview"
-    CODEX_ADAPTER_SYSTEM_LAUNCHER="$(desktop_host_path /usr/bin/codex-desktop)"
     CODEX_ADAPTER_CLI_PATH="${AGENT_CODEX_CLI_PATH:-$HOME/.local/bin/agent-codex}"
     CODEX_ADAPTER_CONFIG_HOME="${AGENT_CODEX_DESKTOP_CONFIG_HOME:-$HOME/.config/codex-sandboxed}"
+    CODEX_ADAPTER_STATE_HOME="${AGENT_CODEX_DESKTOP_STATE_HOME:-$HOME/.local/state/codex-sandboxed}"
+    CODEX_ADAPTER_CACHE_HOME="${AGENT_CODEX_DESKTOP_CACHE_HOME:-$HOME/.cache/codex-sandboxed}"
     CODEX_ADAPTER_PORT="${AGENT_CODEX_DESKTOP_WEBVIEW_PORT:-5176}"
 }
 
 desktop_codex_supported_layout() {
     desktop_set_codex_paths
     cat <<EOF
-supported exact layout:
-  system launcher: $CODEX_ADAPTER_SYSTEM_LAUNCHER
+supported layouts:
+  layout: $CODEX_ADAPTER_LAYOUT
+  system launcher: $CODEX_ADAPTER_SYSTEM_LAUNCHER (optional)
   electron: $CODEX_ADAPTER_ELECTRON
   app asar: $CODEX_ADAPTER_ASAR
   webview dir: $CODEX_ADAPTER_WEBVIEW
   sandboxed CLI: $CODEX_ADAPTER_CLI_PATH
   profile/config dir: $CODEX_ADAPTER_CONFIG_HOME
+  state dir: $CODEX_ADAPTER_STATE_HOME
+  cache dir: $CODEX_ADAPTER_CACHE_HOME
   webview port: $CODEX_ADAPTER_PORT
 EOF
 }
@@ -596,23 +620,18 @@ desktop_codex_validation_errors() {
         printf '  empty webview dir: %s\n' "$CODEX_ADAPTER_WEBVIEW"
         failed=1
     fi
-    if [ ! -x "$CODEX_ADAPTER_SYSTEM_LAUNCHER" ]; then
-        printf '  missing executable system launcher: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
-        failed=1
+    if [ "$CODEX_ADAPTER_LAYOUT" = "user-local" ]; then
+        if [ -n "$CODEX_ADAPTER_START_SH" ] && [ ! -x "$CODEX_ADAPTER_START_SH" ]; then
+            printf '  missing executable start script: %s\n' "$CODEX_ADAPTER_START_SH"
+            failed=1
+        fi
+    elif [ "$CODEX_ADAPTER_LAYOUT" = "system" ]; then
+        :
     else
-        if ! grep -q 'CODEX_CLI_PATH' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"; then
-            printf '  system launcher does not expose CODEX_CLI_PATH: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
-            failed=1
-        fi
-        if ! grep -q 'ELECTRON_RENDERER_URL' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"; then
-            printf '  system launcher does not expose ELECTRON_RENDERER_URL: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
-            failed=1
-        fi
-        if ! grep -q '5175' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"; then
-            printf '  system launcher does not match the expected fixed port 5175 layout: %s\n' "$CODEX_ADAPTER_SYSTEM_LAUNCHER"
-            failed=1
-        fi
+        printf '  unknown Codex Desktop layout: %s\n' "$CODEX_ADAPTER_LAYOUT"
+        failed=1
     fi
+
     if [ ! -x "$CODEX_ADAPTER_CLI_PATH" ]; then
         printf '  missing sandboxed CLI executable: %s\n' "$CODEX_ADAPTER_CLI_PATH"
         failed=1
@@ -637,12 +656,15 @@ electron: host-native
 app-server: CODEX_CLI_PATH points at agent-codex
 shared local chats: no
 experimental: yes, package-specific host wrapper
+layout: $CODEX_ADAPTER_LAYOUT
 system launcher: $CODEX_ADAPTER_SYSTEM_LAUNCHER
 electron: $CODEX_ADAPTER_ELECTRON
 app asar: $CODEX_ADAPTER_ASAR
 webview dir: $CODEX_ADAPTER_WEBVIEW
 sandboxed CLI: $CODEX_ADAPTER_CLI_PATH
 profile/config dir: $CODEX_ADAPTER_CONFIG_HOME
+state dir: $CODEX_ADAPTER_STATE_HOME
+cache dir: $CODEX_ADAPTER_CACHE_HOME
 webview port: $CODEX_ADAPTER_PORT
 wrapper: $(desktop_dest_bin codex)
 desktop entry: $(desktop_dest_entry codex)
@@ -659,7 +681,7 @@ desktop_codex_validate() {
         printf 'unsupported Codex Desktop package layout\n\n' >&2
         desktop_codex_supported_layout >&2
         printf '\ndetected problems:\n%s\n' "$errors" >&2
-        printf '\nCodex Desktop support is experimental and limited to this exact package layout.\n' >&2
+        printf '\nCodex Desktop support is experimental and limited to known package layouts.\n' >&2
         printf 'Electron stays host-native; only the Codex CLI/app-server path is redirected into Podman.\n' >&2
         return 2
     fi
@@ -679,14 +701,22 @@ set -euo pipefail
 
 electron="$CODEX_ADAPTER_ELECTRON"
 app_asar="$CODEX_ADAPTER_ASAR"
+appdir="$CODEX_ADAPTER_APPDIR"
 webview_dir="$CODEX_ADAPTER_WEBVIEW"
 webview_port="\${AGENT_CODEX_DESKTOP_WEBVIEW_PORT:-$CODEX_ADAPTER_PORT}"
+layout="$CODEX_ADAPTER_LAYOUT"
+start_sh="$CODEX_ADAPTER_START_SH"
 
 export CODEX_CLI_PATH="\${CODEX_CLI_PATH:-$CODEX_ADAPTER_CLI_PATH}"
+export CODEX_LINUX_CLI_PATH="\${CODEX_LINUX_CLI_PATH:-\${CODEX_CLI_PATH}}"
+export CUSTOM_CLI_PATH="\${CUSTOM_CLI_PATH:-\${CODEX_CLI_PATH}}"
 export XDG_CONFIG_HOME="\${XDG_CONFIG_HOME:-$CODEX_ADAPTER_CONFIG_HOME}"
+export XDG_STATE_HOME="\${XDG_STATE_HOME:-$CODEX_ADAPTER_STATE_HOME}"
+export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-$CODEX_ADAPTER_CACHE_HOME}"
 export BUILD_FLAVOR="\${BUILD_FLAVOR:-prod}"
 export NODE_ENV="\${NODE_ENV:-production}"
 export ELECTRON_RENDERER_URL="\${ELECTRON_RENDERER_URL:-http://127.0.0.1:\${webview_port}/}"
+export CODEX_WEBVIEW_PORT="\${CODEX_WEBVIEW_PORT:-\${webview_port}}"
 EOF
     cat >>"$wrapper" <<'EOF'
 
@@ -704,7 +734,26 @@ EOF
   exit 127
 }
 
-mkdir -p "${XDG_CONFIG_HOME}"
+mkdir -p "${XDG_CONFIG_HOME}" "${XDG_STATE_HOME}" "${XDG_CACHE_HOME}"
+
+if [[ "${layout}" == "user-local" && -x "${start_sh}" ]]; then
+  tmp_parent="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  if [[ ! -d "${tmp_parent}" || ! -w "${tmp_parent}" ]]; then
+    tmp_parent="${TMPDIR:-/tmp}"
+  fi
+  tmp_start="$(mktemp "${tmp_parent%/}/agent-codex-start.XXXXXX")"
+
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'rm -f "$0"\n'
+    sed \
+    -e 's/^CODEX_LINUX_APP_ID=.*/CODEX_LINUX_APP_ID=Codex/' \
+    -e 's/^CODEX_LINUX_APP_DISPLAY_NAME=.*/CODEX_LINUX_APP_DISPLAY_NAME=CodexSandboxed/' \
+      "${start_sh}"
+  } >"${tmp_start}"
+  chmod +x "${tmp_start}"
+  exec "${tmp_start}" "$@"
+fi
 
 http_pid=""
 electron_pid=""
@@ -799,12 +848,26 @@ PY
   }
 fi
 
-"${electron}" \
-  --enable-sandbox \
-  --ozone-platform-hint=auto \
-  --class=Codex \
-  "${app_asar}" \
-  "$@" &
+if [[ "${layout}" == "user-local" ]]; then
+  "${electron}" \
+    --no-sandbox \
+    --disable-dev-shm-usage \
+    --disable-gpu-sandbox \
+    --disable-gpu-compositing \
+    --ozone-platform-hint=auto \
+    --app-id=Codex \
+    --class=Codex \
+    "${app_asar}" \
+    "$@" &
+else
+  "${electron}" \
+    --enable-sandbox \
+    --ozone-platform-hint=auto \
+    --app-id=Codex \
+    --class=Codex \
+    "${app_asar}" \
+    "$@" &
+fi
 electron_pid=$!
 wait "${electron_pid}"
 EOF
