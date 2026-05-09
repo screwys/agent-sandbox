@@ -44,7 +44,7 @@ unzip -q "${tmpdir}/cmdline-tools.zip" -d "${tmpdir}/cmdline-tools"
 mv "${tmpdir}/cmdline-tools/cmdline-tools" "${android_home}/cmdline-tools/latest"
 
 sdkmanager="${android_home}/cmdline-tools/latest/bin/sdkmanager"
-"${sdkmanager}" --sdk_root="${android_home}" --licenses
+yes | "${sdkmanager}" --sdk_root="${android_home}" --licenses
 "${sdkmanager}" --sdk_root="${android_home}" \
     "platform-tools" \
     "platforms;android-${android_api}" \
