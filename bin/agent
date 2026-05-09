@@ -737,11 +737,7 @@ EOF
 mkdir -p "${XDG_CONFIG_HOME}" "${XDG_STATE_HOME}" "${XDG_CACHE_HOME}"
 
 if [[ "${layout}" == "user-local" && -x "${start_sh}" ]]; then
-  tmp_parent="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
-  if [[ ! -d "${tmp_parent}" || ! -w "${tmp_parent}" ]]; then
-    tmp_parent="${TMPDIR:-/tmp}"
-  fi
-  tmp_start="$(mktemp "${tmp_parent%/}/agent-codex-start.XXXXXX")"
+  tmp_start="$(mktemp "${appdir%/}/.agent-sandbox-start.XXXXXX")"
 
   {
     printf '#!/usr/bin/env bash\n'

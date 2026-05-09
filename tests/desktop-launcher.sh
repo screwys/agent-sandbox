@@ -86,6 +86,11 @@ cat >"$user_appdir/start.sh" <<'EOF'
 #!/usr/bin/env bash
 CODEX_LINUX_APP_ID=Codex
 CODEX_LINUX_APP_DISPLAY_NAME=Codex
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+[ "$script_dir" = "$EXPECTED_APPDIR" ] || {
+  printf 'unexpected script dir: %s\n' "$script_dir" >&2
+  exit 42
+}
 exec "$CODEX_CLI_PATH" --version
 EOF
 chmod +x "$user_appdir/start.sh"
@@ -103,6 +108,7 @@ grep -Fq 'layout="user-local"' "$user_wrapper"
 grep -Fq "start_sh=\"$user_appdir/start.sh\"" "$user_wrapper"
 grep -Fq "CODEX_WEBVIEW_PORT=" "$user_wrapper"
 grep -Fq "CODEX_LINUX_APP_DISPLAY_NAME=CodexSandboxed" "$user_wrapper"
+EXPECTED_APPDIR="$user_appdir" "$user_wrapper" >/dev/null
 
 custom_home="$tmp/custom-home"
 custom_appdir="$tmp/custom-codex"
