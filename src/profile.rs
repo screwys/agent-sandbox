@@ -1,40 +1,49 @@
-use serde::Deserialize;
-use thiserror::Error;
+use std::error::Error;
+use std::fmt;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ProfileError {
-    #[error("invalid profile: {0}")]
-    Toml(#[from] toml::de::Error),
-    #[error("trailing arguments are not allowed for helper: {0}")]
+    Parse(String),
     TrailingArgsNotAllowed(String),
-    #[error("trailing argument is not allowed: {0}")]
     TrailingArgNotAllowed(String),
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+impl fmt::Display for ProfileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(err) => write!(f, "invalid profile: {err}"),
+            Self::TrailingArgsNotAllowed(helper) => {
+                write!(f, "trailing arguments are not allowed for helper: {helper}")
+            }
+            Self::TrailingArgNotAllowed(arg) => {
+                write!(f, "trailing argument is not allowed: {arg}")
+            }
+        }
+    }
+}
+
+impl Error for ProfileError {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Profile {
-    #[serde(default)]
     pub settings: Settings,
-    #[serde(default, rename = "mount")]
     pub mounts: Vec<Mount>,
-    #[serde(default, rename = "host_helper")]
     pub host_helpers: Vec<HostHelper>,
 }
 
 impl Profile {
     pub fn from_toml_str(input: &str) -> Result<Self, ProfileError> {
-        Ok(toml::from_str(input)?)
+        parse_profile(input)
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
     pub projects_dir: Option<String>,
     pub sandbox: Option<SandboxMode>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SandboxMode {
     Strict,
     Comfortable,
@@ -60,10 +69,9 @@ impl SandboxMode {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mount {
     pub path: String,
-    #[serde(default)]
     pub mode: MountMode,
 }
 
@@ -80,6 +88,16 @@ impl Default for MountMode {
 }
 
 impl MountMode {
+    pub fn parse(value: &str) -> Result<Self, ProfileError> {
+        match value {
+            "rw" => Ok(Self::ReadWrite),
+            "ro" => Ok(Self::ReadOnly),
+            other => Err(ProfileError::Parse(format!(
+                "invalid mount mode {other:?}; expected \"rw\" or \"ro\""
+            ))),
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReadWrite => "rw",
@@ -88,31 +106,12 @@ impl MountMode {
     }
 }
 
-impl<'de> Deserialize<'de> for MountMode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.as_str() {
-            "rw" => Ok(Self::ReadWrite),
-            "ro" => Ok(Self::ReadOnly),
-            other => Err(serde::de::Error::custom(format!(
-                "invalid mount mode {other:?}; expected \"rw\" or \"ro\""
-            ))),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostHelper {
     pub name: String,
     pub command: String,
-    #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default)]
     pub allowed_trailing_args: Vec<String>,
-    #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }
 
@@ -152,6 +151,131 @@ pub struct HostCommandPlan {
     pub timeout_secs: u64,
 }
 
-fn default_timeout_secs() -> u64 {
-    30
+enum Section {
+    None,
+    Settings,
+    Mount(usize),
+    HostHelper(usize),
+}
+
+fn parse_profile(input: &str) -> Result<Profile, ProfileError> {
+    let mut profile = Profile::default();
+    let mut section = Section::None;
+    for raw in input.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        match line {
+            "[settings]" => {
+                section = Section::Settings;
+                continue;
+            }
+            "[[mount]]" => {
+                profile.mounts.push(Mount {
+                    path: String::new(),
+                    mode: MountMode::ReadWrite,
+                });
+                section = Section::Mount(profile.mounts.len() - 1);
+                continue;
+            }
+            "[[host_helper]]" => {
+                profile.host_helpers.push(HostHelper {
+                    name: String::new(),
+                    command: String::new(),
+                    args: Vec::new(),
+                    allowed_trailing_args: Vec::new(),
+                    timeout_secs: 30,
+                });
+                section = Section::HostHelper(profile.host_helpers.len() - 1);
+                continue;
+            }
+            _ => {}
+        }
+
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| ProfileError::Parse(format!("expected key = value: {line}")))?;
+        let key = key.trim();
+        let value = value.trim();
+        match section {
+            Section::Settings => match key {
+                "projects_dir" => profile.settings.projects_dir = Some(parse_string(value)?),
+                "sandbox" => {
+                    let value = parse_string(value)?;
+                    profile.settings.sandbox =
+                        Some(SandboxMode::parse(&value).ok_or_else(|| {
+                            ProfileError::Parse(format!("invalid sandbox mode: {value}"))
+                        })?);
+                }
+                other => {
+                    return Err(ProfileError::Parse(format!(
+                        "unknown settings key: {other}"
+                    )));
+                }
+            },
+            Section::Mount(index) => match key {
+                "path" => profile.mounts[index].path = parse_string(value)?,
+                "mode" => profile.mounts[index].mode = MountMode::parse(&parse_string(value)?)?,
+                other => return Err(ProfileError::Parse(format!("unknown mount key: {other}"))),
+            },
+            Section::HostHelper(index) => match key {
+                "name" => profile.host_helpers[index].name = parse_string(value)?,
+                "command" => profile.host_helpers[index].command = parse_string(value)?,
+                "args" => profile.host_helpers[index].args = parse_string_array(value)?,
+                "allowed_trailing_args" => {
+                    profile.host_helpers[index].allowed_trailing_args = parse_string_array(value)?;
+                }
+                "timeout_secs" => {
+                    profile.host_helpers[index].timeout_secs = value.parse().map_err(|_| {
+                        ProfileError::Parse(format!("invalid timeout_secs: {value}"))
+                    })?;
+                }
+                other => {
+                    return Err(ProfileError::Parse(format!(
+                        "unknown host_helper key: {other}"
+                    )));
+                }
+            },
+            Section::None => {
+                return Err(ProfileError::Parse(format!("key outside a section: {key}")));
+            }
+        }
+    }
+    Ok(profile)
+}
+
+fn parse_string(value: &str) -> Result<String, ProfileError> {
+    let value = value.trim();
+    if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+        Ok(unescape_basic(&value[1..value.len() - 1]))
+    } else {
+        Err(ProfileError::Parse(format!(
+            "expected quoted string: {value}"
+        )))
+    }
+}
+
+fn parse_string_array(value: &str) -> Result<Vec<String>, ProfileError> {
+    let value = value.trim();
+    if !value.starts_with('[') || !value.ends_with(']') {
+        return Err(ProfileError::Parse(format!(
+            "expected string array: {value}"
+        )));
+    }
+    let inner = value[1..value.len() - 1].trim();
+    if inner.is_empty() {
+        return Ok(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|part| parse_string(part.trim()))
+        .collect()
+}
+
+fn unescape_basic(value: &str) -> String {
+    value
+        .replace("\\\"", "\"")
+        .replace("\\\\", "\\")
+        .replace("\\n", "\n")
 }

@@ -59,10 +59,11 @@ RUN npm install -g @openai/codex pnpm "playwright@${PLAYWRIGHT_VERSION}" \
 
 RUN pip3 install --break-system-packages --no-cache-dir gallery-dl
 
-COPY bin/agent-host /usr/local/bin/agent-host
+COPY target/release/agent-sandbox /usr/local/bin/agent-sandbox
 COPY bin/wrappers/systemctl /usr/local/bin/systemctl
 COPY bin/wrappers/journalctl /usr/local/bin/journalctl
-RUN chmod 0755 /usr/local/bin/agent-host /usr/local/bin/systemctl /usr/local/bin/journalctl
+RUN chmod 0755 /usr/local/bin/agent-sandbox /usr/local/bin/systemctl /usr/local/bin/journalctl \
+    && ln -sf /usr/local/bin/agent-sandbox /usr/local/bin/agent-host
 
 ENV JAVA_HOME="/usr/lib/jvm/java-${TEMURIN_MAJOR}-openjdk"
 ENV PATH="${JAVA_HOME}/bin:/usr/local/bin:/usr/bin:/bin"

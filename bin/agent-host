@@ -1,52 +1,15 @@
-#!/usr/bin/env python3
-import json
-import os
-import socket
-import sys
+#!/usr/bin/env bash
+set -euo pipefail
 
+script_path="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+    script_path="$(readlink -f -- "$script_path" 2>/dev/null || printf '%s\n' "$script_path")"
+fi
+repo="$(cd -- "$(dirname -- "$script_path")/.." && pwd -P)"
+bin="${AGENT_SANDBOX_BIN:-$repo/target/release/agent-sandbox}"
 
-EXIT_MARKER = b"\n__AGENT_EXIT__="
+if [ -x "$bin" ]; then
+    exec "$bin" host "$@"
+fi
 
-
-def broker_socket_path() -> str:
-    override = os.environ.get("AGENT_BROKER_SOCKET")
-    if override:
-        return override
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
-    if not runtime_dir:
-        raise RuntimeError("XDG_RUNTIME_DIR is not set")
-    return os.path.join(runtime_dir, "agent-sandbox", "broker.sock")
-
-
-def main() -> int:
-    request = json.dumps({"argv": sys.argv[1:]}).encode() + b"\n"
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(broker_socket_path())
-        client.sendall(request)
-        payload = b""
-        while True:
-            chunk = client.recv(8192)
-            if not chunk:
-                break
-            payload += chunk
-            marker_at = payload.find(EXIT_MARKER)
-            if marker_at >= 0:
-                sys.stdout.buffer.write(payload[:marker_at])
-                sys.stdout.buffer.flush()
-                tail = payload[marker_at + len(EXIT_MARKER):].splitlines()[0]
-                return int(tail)
-            keep = max(0, len(payload) - len(EXIT_MARKER))
-            if keep:
-                sys.stdout.buffer.write(payload[:keep])
-                sys.stdout.buffer.flush()
-                payload = payload[keep:]
-    print("agent-host: broker closed without exit marker", file=sys.stderr)
-    return 1
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        print(f"agent-host: {exc}", file=sys.stderr)
-        raise SystemExit(2)
+exec cargo run --quiet --manifest-path "$repo/Cargo.toml" --bin agent-sandbox -- host "$@"

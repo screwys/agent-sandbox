@@ -1,14 +1,24 @@
+use std::error::Error;
+use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
-
-use thiserror::Error;
 
 use crate::profile::{MountMode, Profile, SandboxMode};
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum RunPlanError {
-    #[error("exec command cannot be empty")]
     EmptyExecCommand,
 }
+
+impl fmt::Display for RunPlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyExecCommand => write!(f, "exec command cannot be empty"),
+        }
+    }
+}
+
+impl Error for RunPlanError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommandKind {
@@ -25,6 +35,8 @@ pub struct RunPlanInput {
     pub agent_home: PathBuf,
     pub broker_dir: PathBuf,
     pub image: String,
+    pub network: String,
+    pub userns: String,
     pub sandbox_mode: SandboxMode,
     pub command: CommandKind,
     pub profiles: Vec<Profile>,
@@ -33,6 +45,8 @@ pub struct RunPlanInput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunPlan {
     pub image: String,
+    pub network: String,
+    pub userns: String,
     pub sandbox_mode: SandboxMode,
     pub read_only: bool,
     pub workdir: PathBuf,
@@ -40,43 +54,62 @@ pub struct RunPlan {
     pub env: Vec<EnvVar>,
     pub mounts: Vec<MountSpec>,
     pub blocked_mounts: Vec<BlockedMount>,
+    pub tmpfs: Vec<String>,
+    pub interactive: bool,
+    pub tty: bool,
 }
 
 impl RunPlan {
     pub fn build(input: RunPlanInput) -> Result<Self, RunPlanError> {
         let command = command_argv(input.command)?;
         let read_only = input.sandbox_mode != SandboxMode::Disabled;
-        let mut mounts = vec![
-            MountSpec {
-                source: input.agent_home.clone(),
-                target: input.home.clone(),
-                mode: MountMode::ReadWrite,
-            },
-            MountSpec {
-                source: input.broker_dir.clone(),
-                target: PathBuf::from("/run/agent-sandbox"),
-                mode: MountMode::ReadWrite,
-            },
-        ];
+        let mut mounts = Vec::new();
         let mut blocked_mounts = Vec::new();
 
-        if path_covers(&input.projects_dir, &input.repo) {
-            mounts.push(MountSpec {
-                source: input.repo.clone(),
-                target: input.repo.clone(),
-                mode: MountMode::ReadOnly,
-            });
+        if input.sandbox_mode == SandboxMode::Disabled {
+            add_mount_if_exists(&mut mounts, &input.home, &input.home, MountMode::ReadWrite);
+            if !path_covers(&input.home, &input.projects_dir) {
+                add_mount_if_exists(
+                    &mut mounts,
+                    &input.projects_dir,
+                    &input.projects_dir,
+                    MountMode::ReadWrite,
+                );
+            }
+            add_mount_if_exists(
+                &mut mounts,
+                &input.agent_home,
+                &input.agent_home,
+                MountMode::ReadWrite,
+            );
+            add_mount_if_exists(
+                &mut mounts,
+                &input.broker_dir,
+                &PathBuf::from("/run/agent-sandbox"),
+                MountMode::ReadWrite,
+            );
         } else {
-            mounts.push(MountSpec {
-                source: input.projects_dir.clone(),
-                target: input.projects_dir.clone(),
-                mode: MountMode::ReadWrite,
-            });
+            add_mount_if_exists(
+                &mut mounts,
+                &input.agent_home,
+                &input.home,
+                MountMode::ReadWrite,
+            );
+            add_mount_if_exists(
+                &mut mounts,
+                &input.broker_dir,
+                &PathBuf::from("/run/agent-sandbox"),
+                MountMode::ReadWrite,
+            );
+            mount_projects(&mut mounts, &input.projects_dir, &input.repo);
         }
 
         for profile in &input.profiles {
             for mount in &profile.mounts {
                 let source = expand_home(&mount.path, &input.home);
+                if !source.exists() {
+                    continue;
+                }
                 if read_only && path_covers(&source, &input.repo) {
                     blocked_mounts.push(BlockedMount {
                         source,
@@ -95,19 +128,32 @@ impl RunPlan {
 
         Ok(Self {
             image: input.image,
+            network: input.network,
+            userns: input.userns,
             sandbox_mode: input.sandbox_mode,
             read_only,
-            workdir: input.projects_dir,
+            workdir: workdir_for_container(&input.home, &input.projects_dir),
             command,
             env: default_env(&input.home),
             mounts,
             blocked_mounts,
+            tmpfs: vec![
+                "/tmp:rw,nosuid,nodev,mode=1777".to_string(),
+                "/var/tmp:rw,nosuid,nodev,mode=1777".to_string(),
+                "/root/.android:rw,nosuid,nodev,mode=700".to_string(),
+            ],
+            interactive: std::io::IsTerminal::is_terminal(&std::io::stdin())
+                || std::env::var("AGENT_PRESERVE_STDIN").ok().as_deref() == Some("1"),
+            tty: std::io::IsTerminal::is_terminal(&std::io::stdin())
+                && std::io::IsTerminal::is_terminal(&std::io::stdout()),
         })
     }
 
     pub fn to_human(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("image: {}\n", self.image));
+        out.push_str(&format!("network: {}\n", self.network));
+        out.push_str(&format!("userns: {}\n", self.userns));
         out.push_str(&format!("sandbox: {}\n", self.sandbox_mode.as_str()));
         out.push_str(&format!(
             "read-only: {}\n",
@@ -136,6 +182,50 @@ impl RunPlan {
         }
 
         out
+    }
+
+    pub fn podman_args(&self) -> Vec<String> {
+        let mut args = vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            format!("--userns={}", self.userns),
+            format!("--network={}", self.network),
+            "--security-opt=no-new-privileges".to_string(),
+            "--security-opt=label=disable".to_string(),
+            "--cap-drop=all".to_string(),
+            "--pids-limit=4096".to_string(),
+        ];
+        for tmpfs in &self.tmpfs {
+            args.push("--tmpfs".to_string());
+            args.push(tmpfs.clone());
+        }
+        for env in &self.env {
+            args.push("--env".to_string());
+            args.push(format!("{}={}", env.key, env.value));
+        }
+        args.push("--workdir".to_string());
+        args.push(self.workdir.display().to_string());
+        if self.read_only {
+            args.push("--read-only".to_string());
+        }
+        if self.interactive {
+            args.push("--interactive".to_string());
+        }
+        if self.tty {
+            args.push("--tty".to_string());
+        }
+        for mount in &self.mounts {
+            args.push("--volume".to_string());
+            args.push(format!(
+                "{}:{}:{}",
+                mount.source.display(),
+                mount.target.display(),
+                mount.mode.as_str()
+            ));
+        }
+        args.push(self.image.clone());
+        args.extend(self.command.iter().cloned());
+        args
     }
 }
 
@@ -240,4 +330,47 @@ fn expand_home(path: &str, home: &Path) -> PathBuf {
 
 fn path_covers(source: &Path, target: &Path) -> bool {
     source == target || target.starts_with(source)
+}
+
+fn add_mount_if_exists(mounts: &mut Vec<MountSpec>, source: &Path, target: &Path, mode: MountMode) {
+    if source.exists() {
+        mounts.push(MountSpec {
+            source: source.to_path_buf(),
+            target: target.to_path_buf(),
+            mode,
+        });
+    }
+}
+
+fn mount_projects(mounts: &mut Vec<MountSpec>, projects_dir: &Path, repo: &Path) {
+    if path_covers(projects_dir, repo) {
+        let protected = repo
+            .strip_prefix(projects_dir)
+            .ok()
+            .and_then(|rel| rel.components().next())
+            .map(|first| projects_dir.join(first.as_os_str()))
+            .unwrap_or_else(|| repo.to_path_buf());
+        if let Ok(entries) = fs::read_dir(projects_dir) {
+            for child in entries.filter_map(|entry| entry.ok().map(|entry| entry.path())) {
+                if child == protected {
+                    continue;
+                }
+                add_mount_if_exists(mounts, &child, &child, MountMode::ReadWrite);
+            }
+        }
+        add_mount_if_exists(mounts, repo, repo, MountMode::ReadOnly);
+    } else {
+        add_mount_if_exists(mounts, projects_dir, projects_dir, MountMode::ReadWrite);
+    }
+}
+
+fn workdir_for_container(home: &Path, projects_dir: &Path) -> PathBuf {
+    let pwd = std::env::current_dir().unwrap_or_else(|_| projects_dir.to_path_buf());
+    if path_covers(projects_dir, &pwd) {
+        pwd
+    } else if let Ok(relative) = projects_dir.strip_prefix(home) {
+        home.join(relative)
+    } else {
+        projects_dir.to_path_buf()
+    }
 }

@@ -94,6 +94,8 @@ fn run_plan_keeps_podman_mechanics_typed_and_blocks_repo_covering_mounts() {
         agent_home: PathBuf::from("/home/screwy/.agent-sandbox/home"),
         broker_dir: PathBuf::from("/run/user/1000/agent-sandbox"),
         image: "localhost/agent-sandbox:latest".to_string(),
+        network: "host".to_string(),
+        userns: "host".to_string(),
         sandbox_mode: SandboxMode::Strict,
         command: CommandKind::Codex(vec!["--help".to_string()]),
         profiles: vec![profile],
@@ -140,6 +142,7 @@ fn cli_prints_human_readable_run_plan_for_codex() {
     let runtime = root.join("runtime");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(&runtime).expect("runtime dir");
+    fs::create_dir_all(home.join(".config/niri")).expect("niri dir");
 
     let profile_path = root.join("profile.toml");
     fs::write(
