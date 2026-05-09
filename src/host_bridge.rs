@@ -167,7 +167,14 @@ fn open_url_plan(argv: &[String]) -> Result<Vec<CommandPlan>, String> {
         return Err("AGENT_HOST_OPEN_COMMAND is empty".to_string());
     }
     command.push(argv[1].clone());
-    Ok(vec![CommandPlan { argv: command }])
+    let mut detached = vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        "setsid \"$@\" >/dev/null 2>&1 </dev/null &".to_string(),
+        "agent-open-url".to_string(),
+    ];
+    detached.extend(command);
+    Ok(vec![CommandPlan { argv: detached }])
 }
 
 fn ensure_allowed_url(url: &str) -> Result<(), String> {
@@ -533,6 +540,10 @@ mod tests {
         assert_eq!(
             plans[0].argv,
             vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "setsid \"$@\" >/dev/null 2>&1 </dev/null &".to_string(),
+                "agent-open-url".to_string(),
                 "xdg-open".to_string(),
                 "https://auth.openai.com/".to_string()
             ]
