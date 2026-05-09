@@ -21,6 +21,7 @@ systemctl --user status igloo.service --no-pager
 systemctl --user is-active --quiet igloo.service || true
 systemctl --user is-failed --quiet igloo.service || true
 journalctl --user -u igloo.service -n 80 --no-pager
+AGENT_OPEN_URL_LOG="$tmp/open-url.log" xdg-open https://auth.openai.com/oauth/authorize
 
 grep -Fxq 'service daemon-reload' "$AGENT_HOST_LOG"
 grep -Fxq 'service restart igloo.service' "$AGENT_HOST_LOG"
@@ -28,5 +29,7 @@ grep -Fxq 'service status igloo.service' "$AGENT_HOST_LOG"
 grep -Fxq 'service is-active igloo.service' "$AGENT_HOST_LOG"
 grep -Fxq 'service is-failed igloo.service' "$AGENT_HOST_LOG"
 grep -Fxq 'service logs igloo.service -n 80' "$AGENT_HOST_LOG"
+grep -Fxq 'open-url https://auth.openai.com/oauth/authorize' "$AGENT_HOST_LOG"
+test -f "$tmp/open-url.log"
 
 printf 'host bridge tests passed\n'

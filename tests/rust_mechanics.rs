@@ -113,6 +113,11 @@ fn run_plan_keeps_podman_mechanics_typed_and_blocks_repo_covering_mounts() {
             .any(|entry| entry.key == "AGENT_BROKER_SOCKET"
                 && entry.value == "/run/agent-sandbox/broker.sock")
     );
+    assert!(
+        plan.env
+            .iter()
+            .any(|entry| entry.key == "BROWSER" && entry.value == "/usr/local/bin/agent-open-url")
+    );
     assert!(plan.mounts.iter().any(|mount| {
         mount.source == PathBuf::from("/home/screwy/.config/niri")
             && mount.target == PathBuf::from("/home/screwy/.config/niri")

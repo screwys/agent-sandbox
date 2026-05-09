@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: agent-open-url URL" >&2
+    exit 2
+fi
+
+log="${AGENT_OPEN_URL_LOG:-/tmp/agent-open-url.log}"
+mkdir -p "$(dirname -- "$log")"
+exec agent-host open-url "$1" >>"$log" 2>&1

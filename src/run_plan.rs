@@ -323,6 +323,10 @@ fn default_env(home: &Path) -> Vec<EnvVar> {
             key: "AGENT_BROKER_SOCKET".to_string(),
             value: "/run/agent-sandbox/broker.sock".to_string(),
         },
+        EnvVar {
+            key: "BROWSER".to_string(),
+            value: "/usr/local/bin/agent-open-url".to_string(),
+        },
     ]
 }
 

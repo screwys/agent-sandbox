@@ -444,8 +444,7 @@ fn self_update(args: &[String], config: &AppConfig) -> Result<i32, String> {
             || line.starts_with("src/")
             || line == "Cargo.toml"
             || line == "Cargo.lock"
-            || line == "bin/wrappers/systemctl"
-            || line == "bin/wrappers/journalctl"
+            || line.starts_with("bin/wrappers/")
     });
     if changed_runtime && config.repo.join("Cargo.toml").exists() {
         Command::new("cargo")

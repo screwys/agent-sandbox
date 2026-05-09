@@ -60,14 +60,19 @@ RUN npm install -g @openai/codex pnpm "playwright@${PLAYWRIGHT_VERSION}" \
 RUN pip3 install --break-system-packages --no-cache-dir gallery-dl
 
 COPY target/release/agent-sandbox /usr/local/bin/agent-sandbox
+COPY bin/wrappers/agent-open-url /usr/local/bin/agent-open-url
 COPY bin/wrappers/systemctl /usr/local/bin/systemctl
 COPY bin/wrappers/journalctl /usr/local/bin/journalctl
-RUN chmod 0755 /usr/local/bin/agent-sandbox /usr/local/bin/systemctl /usr/local/bin/journalctl \
-    && ln -sf /usr/local/bin/agent-sandbox /usr/local/bin/agent-host
+RUN chmod 0755 /usr/local/bin/agent-sandbox /usr/local/bin/agent-open-url /usr/local/bin/systemctl /usr/local/bin/journalctl \
+    && ln -sf /usr/local/bin/agent-sandbox /usr/local/bin/agent-host \
+    && ln -sf /usr/local/bin/agent-open-url /usr/local/bin/xdg-open \
+    && ln -sf /usr/local/bin/agent-open-url /usr/local/bin/sensible-browser \
+    && ln -sf /usr/local/bin/agent-open-url /usr/local/bin/x-www-browser
 
 ENV JAVA_HOME="/usr/lib/jvm/java-${TEMURIN_MAJOR}-openjdk"
 ENV PATH="${JAVA_HOME}/bin:/usr/local/bin:/usr/bin:/bin"
 ENV NODE_PATH="/usr/lib/node_modules"
 ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
+ENV BROWSER="/usr/local/bin/agent-open-url"
 
 CMD ["bash"]

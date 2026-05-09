@@ -145,7 +145,101 @@ fn command_plan(argv: &[String], config: &AppConfig) -> Result<Vec<CommandPlan>,
                 .argv,
         }]);
     }
+    if argv[0] == "open-url" {
+        return open_url_plan(argv);
+    }
     legacy_service_plan(argv, config)
+}
+
+fn open_url_plan(argv: &[String]) -> Result<Vec<CommandPlan>, String> {
+    if argv.len() != 2 {
+        return Err("usage: open-url URL".to_string());
+    }
+    ensure_allowed_url(&argv[1])?;
+
+    let opener = std::env::var("AGENT_HOST_OPEN_COMMAND").unwrap_or_else(|_| "xdg-open".into());
+    let mut command = opener
+        .split_whitespace()
+        .filter(|part| !part.is_empty())
+        .map(String::from)
+        .collect::<Vec<_>>();
+    if command.is_empty() {
+        return Err("AGENT_HOST_OPEN_COMMAND is empty".to_string());
+    }
+    command.push(argv[1].clone());
+    Ok(vec![CommandPlan { argv: command }])
+}
+
+fn ensure_allowed_url(url: &str) -> Result<(), String> {
+    if url.len() > 4096 || url.is_empty() {
+        return Err("URL is empty or too long".to_string());
+    }
+    if url.chars().any(|ch| ch.is_control()) {
+        return Err("URL contains control characters".to_string());
+    }
+
+    let lower = url.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("https://") {
+        ensure_plain_authority(rest)?;
+        return Ok(());
+    }
+    if let Some(rest) = lower.strip_prefix("http://") {
+        let host = authority_host(rest)?;
+        if is_loopback_host(host) {
+            return Ok(());
+        }
+        return Err("only loopback HTTP URLs may be opened on the host".to_string());
+    }
+    Err("only HTTPS and loopback HTTP URLs may be opened on the host".to_string())
+}
+
+fn ensure_plain_authority(rest: &str) -> Result<(), String> {
+    authority_host(rest)?;
+    Ok(())
+}
+
+fn authority_host(rest: &str) -> Result<&str, String> {
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|authority| !authority.is_empty())
+        .ok_or_else(|| "URL is missing a host".to_string())?;
+    if authority.contains('@') {
+        return Err("URL userinfo is not allowed".to_string());
+    }
+    if let Some(after_bracket) = authority.strip_prefix('[') {
+        let end = after_bracket
+            .find(']')
+            .ok_or_else(|| "URL IPv6 host is missing a closing bracket".to_string())?;
+        let suffix = &after_bracket[end + 1..];
+        if !suffix.is_empty() && !suffix.starts_with(':') {
+            return Err("URL IPv6 host has an invalid suffix".to_string());
+        }
+        let host = &after_bracket[..end];
+        if host.is_empty() {
+            return Err("URL is missing a host".to_string());
+        }
+        return Ok(host);
+    }
+    let host = authority.split(':').next().unwrap_or(authority);
+    if host.is_empty() {
+        Err("URL is missing a host".to_string())
+    } else {
+        Ok(host)
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost" || host == "::1" || is_ipv4_loopback(host)
+}
+
+fn is_ipv4_loopback(host: &str) -> bool {
+    let octets = host.split('.').collect::<Vec<_>>();
+    octets.len() == 4
+        && octets[0] == "127"
+        && octets
+            .iter()
+            .all(|octet| !octet.is_empty() && octet.parse::<u8>().is_ok())
 }
 
 fn legacy_service_plan(argv: &[String], config: &AppConfig) -> Result<Vec<CommandPlan>, String> {
@@ -396,6 +490,54 @@ fn decode_request(raw: &str) -> Result<Vec<String>, String> {
         args.push(arg);
     }
     Ok(args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_url_accepts_https_and_loopback_http() {
+        for url in [
+            "https://auth.openai.com/oauth/authorize?client_id=codex",
+            "https://example.com/path",
+            "http://127.0.0.1:1455/callback",
+            "http://127.42.0.1/callback",
+            "http://localhost:1455/callback",
+            "http://[::1]:1455/callback",
+        ] {
+            ensure_allowed_url(url).expect(url);
+        }
+    }
+
+    #[test]
+    fn open_url_rejects_unsafe_urls() {
+        for url in [
+            "",
+            "file:///home/laptop/.ssh/id_ed25519",
+            "mailto:test@example.com",
+            "http://example.com",
+            "http://127.evil/callback",
+            "http://[::1]evil/callback",
+            "https://user@example.com",
+            "https://",
+            "https://example.com/\nnext",
+        ] {
+            assert!(ensure_allowed_url(url).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn open_url_plan_uses_default_host_opener() {
+        let plans = open_url_plan(&["open-url".into(), "https://auth.openai.com/".into()]).unwrap();
+        assert_eq!(
+            plans[0].argv,
+            vec![
+                "xdg-open".to_string(),
+                "https://auth.openai.com/".to_string()
+            ]
+        );
+    }
 }
 
 #[allow(dead_code)]
