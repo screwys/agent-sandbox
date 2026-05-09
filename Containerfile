@@ -44,7 +44,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @openai/codex pnpm "playwright@${PLAYWRIGHT_VERSION}" \
-    && rm -rf /root/.npm
+    && go install github.com/a-h/templ/cmd/templ@latest \
+    && install -m 0755 /root/go/bin/templ /usr/local/bin/templ \
+    && rm -rf /root/.cache/go-build /root/go/pkg/mod/cache /root/.npm
 
 COPY bin/agent-host /usr/local/bin/agent-host
 COPY bin/wrappers/systemctl /usr/local/bin/systemctl
