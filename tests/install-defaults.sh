@@ -49,6 +49,11 @@ test -x "$tmp/home/.local/bin/codex-desktop-sandboxed"
 test ! -e "$tmp/home/.local/share/applications/agent-codex-desktop.desktop"
 test -f "$tmp/home/.local/share/applications/codex-sandboxed.desktop"
 grep -q '^build ' "$tmp/podman.log"
+grep -Fq -- "-f $REPO/Containerfile $REPO" "$tmp/podman.log"
+if grep -Fq "$tmp/home/.local/Containerfile" "$tmp/podman.log"; then
+    cat "$tmp/podman.log" >&2
+    exit 1
+fi
 
 HOME="$tmp/home" \
 AGENT_STATE_DIR="$tmp/state" \
