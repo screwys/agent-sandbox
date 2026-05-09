@@ -56,7 +56,7 @@ COPY bin/wrappers/journalctl /usr/local/bin/journalctl
 RUN chmod 0755 /usr/local/bin/agent-host /usr/local/bin/systemctl /usr/local/bin/journalctl
 
 ENV PATH="/usr/local/bin:/usr/bin:/bin"
-ENV NODE_PATH="/usr/local/lib/node_modules"
+ENV NODE_PATH="/usr/lib/node_modules"
 ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
 
 CMD ["bash"]
