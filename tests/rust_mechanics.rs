@@ -105,6 +105,8 @@ fn run_plan_keeps_podman_mechanics_typed_and_blocks_repo_covering_mounts() {
     assert_eq!(plan.image, "localhost/agent-sandbox:latest");
     assert_eq!(plan.command, vec!["codex", "--help"]);
     assert!(plan.read_only);
+    assert!(plan.interactive);
+    assert!(plan.podman_args().contains(&"--interactive".to_string()));
     assert!(
         plan.env
             .iter()
@@ -194,6 +196,7 @@ fn cli_prints_human_readable_run_plan_for_codex() {
     assert!(stdout.contains("sandbox: strict"));
     assert!(stdout.contains("read-only: yes"));
     assert!(stdout.contains("command: codex --model gpt-5"));
+    assert!(stdout.contains("interactive: yes"));
     assert!(stdout.contains(&format!(
         "mount: {} -> {} rw",
         home.join(".config/niri").display(),

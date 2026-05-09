@@ -61,6 +61,10 @@ pub struct RunPlan {
 
 impl RunPlan {
     pub fn build(input: RunPlanInput) -> Result<Self, RunPlanError> {
+        let needs_stdin = matches!(
+            &input.command,
+            CommandKind::Codex(_) | CommandKind::Shell(_)
+        );
         let command = command_argv(input.command)?;
         let read_only = input.sandbox_mode != SandboxMode::Disabled;
         let mut mounts = Vec::new();
@@ -142,7 +146,8 @@ impl RunPlan {
                 "/var/tmp:rw,nosuid,nodev,mode=1777".to_string(),
                 "/root/.android:rw,nosuid,nodev,mode=700".to_string(),
             ],
-            interactive: std::io::IsTerminal::is_terminal(&std::io::stdin())
+            interactive: needs_stdin
+                || std::io::IsTerminal::is_terminal(&std::io::stdin())
                 || std::env::var("AGENT_PRESERVE_STDIN").ok().as_deref() == Some("1"),
             tty: std::io::IsTerminal::is_terminal(&std::io::stdin())
                 && std::io::IsTerminal::is_terminal(&std::io::stdout()),
@@ -161,6 +166,11 @@ impl RunPlan {
         ));
         out.push_str(&format!("workdir: {}\n", self.workdir.display()));
         out.push_str(&format!("command: {}\n", self.command.join(" ")));
+        out.push_str(&format!(
+            "interactive: {}\n",
+            if self.interactive { "yes" } else { "no" }
+        ));
+        out.push_str(&format!("tty: {}\n", if self.tty { "yes" } else { "no" }));
 
         for env in &self.env {
             out.push_str(&format!("env: {}={}\n", env.key, env.value));
