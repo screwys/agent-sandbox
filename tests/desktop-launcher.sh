@@ -91,6 +91,9 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
   printf 'unexpected script dir: %s\n' "$script_dir" >&2
   exit 42
 }
+if [ -n "${EXPECTED_ARGS:-}" ]; then
+  printf '%s\n' "$@" >"$EXPECTED_ARGS"
+fi
 exec "$CODEX_CLI_PATH" --version
 EOF
 chmod +x "$user_appdir/start.sh"
@@ -110,6 +113,10 @@ grep -Fq "CODEX_WEBVIEW_PORT=" "$user_wrapper"
 grep -Fq "AGENT_CODEX_DESKTOP_LD_PRELOAD-" "$user_wrapper"
 grep -Fq "CODEX_LINUX_APP_DISPLAY_NAME=CodexSandboxed" "$user_wrapper"
 EXPECTED_APPDIR="$user_appdir" "$user_wrapper" >/dev/null
+EXPECTED_ARGS="$tmp/wayland.args" EXPECTED_APPDIR="$user_appdir" WAYLAND_DISPLAY=wayland-1 "$user_wrapper" >/dev/null
+grep -Fxq -- '--wayland' "$tmp/wayland.args"
+EXPECTED_ARGS="$tmp/x11.args" EXPECTED_APPDIR="$user_appdir" WAYLAND_DISPLAY=wayland-1 "$user_wrapper" --x11 >/dev/null
+test "$(sed -n '1p' "$tmp/x11.args")" = "--x11"
 
 custom_home="$tmp/custom-home"
 custom_appdir="$tmp/custom-codex"

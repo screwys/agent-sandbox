@@ -276,7 +276,37 @@ if [[ "${{layout}}" == "user-local" && -x "${{start_sh}}" ]]; then
       "${{start_sh}}"
   }} >"${{tmp_start}}"
   chmod +x "${{tmp_start}}"
-  exec "${{tmp_start}}" "$@"
+
+  launch_args=("$@")
+  has_platform_arg=0
+  for arg in "${{launch_args[@]}}"; do
+    case "${{arg}}" in
+      --wayland|--x11|--safe-mode|--ozone-platform=*|--ozone-platform-hint=*)
+        has_platform_arg=1
+        ;;
+    esac
+  done
+  if [[ "${{has_platform_arg}}" == 0 ]]; then
+    case "${{AGENT_CODEX_DESKTOP_PLATFORM:-auto}}" in
+      wayland)
+        launch_args=(--wayland "${{launch_args[@]}}")
+        ;;
+      x11)
+        launch_args=(--x11 "${{launch_args[@]}}")
+        ;;
+      auto|"")
+        if [[ -n "${{WAYLAND_DISPLAY:-}}" && -z "${{SOMMELIER_VERSION:-}}" ]]; then
+          launch_args=(--wayland "${{launch_args[@]}}")
+        fi
+        ;;
+      *)
+        echo "unsupported AGENT_CODEX_DESKTOP_PLATFORM: ${{AGENT_CODEX_DESKTOP_PLATFORM}}" >&2
+        exit 2
+        ;;
+    esac
+  fi
+
+  exec "${{tmp_start}}" "${{launch_args[@]}}"
 fi
 
 http_pid=""
