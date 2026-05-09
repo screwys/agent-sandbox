@@ -48,12 +48,15 @@ RUN npm install -g @openai/codex pnpm "playwright@${PLAYWRIGHT_VERSION}" \
     && install -m 0755 /root/go/bin/templ /usr/local/bin/templ \
     && rm -rf /root/.cache/go-build /root/go/pkg/mod/cache /root/.npm
 
+RUN pip3 install --break-system-packages --no-cache-dir gallery-dl
+
 COPY bin/agent-host /usr/local/bin/agent-host
 COPY bin/wrappers/systemctl /usr/local/bin/systemctl
 COPY bin/wrappers/journalctl /usr/local/bin/journalctl
 RUN chmod 0755 /usr/local/bin/agent-host /usr/local/bin/systemctl /usr/local/bin/journalctl
 
 ENV PATH="/usr/local/bin:/usr/bin:/bin"
+ENV NODE_PATH="/usr/local/lib/node_modules"
 ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
 
 CMD ["bash"]
