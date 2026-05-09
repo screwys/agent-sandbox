@@ -1,0 +1,17 @@
+[package]
+name = "agent-sandbox"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "agent_sandbox"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-sandbox"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
+toml = "1.1.2"
