@@ -477,6 +477,7 @@ run_container() {
         --pids-limit=4096
         --tmpfs /tmp:rw,nosuid,nodev,mode=1777
         --tmpfs /var/tmp:rw,nosuid,nodev,mode=1777
+        --tmpfs /root/.android:rw,nosuid,nodev,mode=700
         --env "HOME=$HOME"
         --env "USER=$USER"
         --env "LOGNAME=$USER"
